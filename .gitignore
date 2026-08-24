@@ -23,3 +23,6 @@ venv/
 
 # 输出
 examples/output/
+
+# 大型示例文件（不入库，避免仓库臃肿）
+examples/input/*.pdf
