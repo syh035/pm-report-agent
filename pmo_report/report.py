@@ -246,6 +246,15 @@ class ReportGenerator:
             rows.append(f"滞后任务 {prev['delayed']} → {stats.delayed_count}{d(stats.delayed_count, prev['delayed'])}")
         if prev.get("total") is not None and prev["total"] != stats.total_tasks:
             rows.append(f"任务总数 {prev['total']} → {stats.total_tasks}")
+        # 环比增强：只对比两周都存在的任务集合（剔除新增/删除影响）
+        or_ = prev.get("overlap_rate")
+        if or_:
+            rows.append(f"同任务集合完成率 {or_['prev']:.1f}% → {or_['cur']:.1f}%（{or_['n']} 项）")
+        # 环比增强：连续两周无进展
+        np_ = prev.get("no_progress")
+        if np_:
+            shown = "、".join(np_[:6]) + (" 等" if len(np_) > 6 else "")
+            rows.append(f"连续两周无进展：{shown}（{len(np_)} 项）")
         return rows
 
     def _delta_section(self, stats: ProjectStats, prev: Optional[Dict], for_text: bool = False) -> str:

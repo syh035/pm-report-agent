@@ -35,6 +35,7 @@ class Task:
     note: str = ""                    # 备注 / 详情
     depends_on: str = ""              # 依赖的任务名（风险传递用，可空）
     slow_ok: bool = False             # 用户标记：该任务进度偏慢属正常，不再标红
+    weight: float = 1.0               # 任务权重（影响完成率/平均进度，默认 1）
 
     def to_dict(self) -> Dict:
         d = asdict(self)

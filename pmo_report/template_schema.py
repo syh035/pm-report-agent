@@ -54,3 +54,44 @@ KPI_OPTIONS = [
     {"key": "avg_target_progress", "label": "平均目标进度"},
     {"key": "risk", "label": "风险项"},
 ]
+
+
+# ---------- 预置模板（供面板一键切换） ----------
+PRESET_TEMPLATES: Dict[str, Dict] = {
+    "default": {
+        "label": "标准周报",
+        "blocks": DEFAULT_BLOCKS,
+    },
+    "decision": {
+        "label": "决策简报",
+        "desc": "面向决策层：KPI 前置、风险突出、下周决策点",
+        "blocks": [
+            {"id": "d1", "type": "title", "title": "{project_name} 决策简报"},
+            {"id": "d2", "type": "meta", "format": "周期：{period} ｜ 生成日期：{today}"},
+            {"id": "d3", "type": "kpi", "keys": ["completion_rate", "avg_progress", "risk", "delayed"]},
+            {"id": "d4", "type": "heading", "title": "一、关键结论"},
+            {"id": "d5", "type": "overview", "placeholder": "overview"},
+            {"id": "d6", "type": "heading", "title": "二、风险与需决策事项"},
+            {"id": "d7", "type": "risk_list"},
+            {"id": "d8", "type": "heading", "title": "三、下周决策点"},
+            {"id": "d9", "type": "plan"},
+            {"id": "d10", "type": "delta"},
+        ],
+    },
+    "management": {
+        "label": "管理层周报",
+        "desc": "面向管理层：环比前置、关注趋势与滞后",
+        "blocks": [
+            {"id": "m1", "type": "title", "title": "{project_name} 管理层周报"},
+            {"id": "m2", "type": "meta", "format": "周期：{period} ｜ 生成日期：{today}"},
+            {"id": "m3", "type": "heading", "title": "一、与上周对比"},
+            {"id": "m4", "type": "delta"},
+            {"id": "m5", "type": "heading", "title": "二、核心数据"},
+            {"id": "m6", "type": "stats_table"},
+            {"id": "m7", "type": "heading", "title": "三、完成情况"},
+            {"id": "m8", "type": "status"},
+            {"id": "m9", "type": "heading", "title": "四、风险与滞后"},
+            {"id": "m10", "type": "risk_list"},
+        ],
+    },
+}

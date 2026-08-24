@@ -29,6 +29,10 @@ DEFAULT_RULES: Dict[str, Any] = {
     "color_risk": "#C0504D",     # 风险标注色
     "color_warning": "#E65100",  # 关注/偏慢标注色
     "color_normal": "#2E7D32",   # 正常标注色
+    # —— 路线C：可编辑规则库（本地持久化，越用越准）——
+    "ignore_keywords": [],       # 忽略词：命中该词的文本行/任务名不作为任务（如"下周重点"）
+    "column_aliases": {},        # 自定义列名映射：{"表头名": "字段"}，字段 ∈ name/owner/progress/status/plan_start/plan_end/actual_end/note
+    "status_words": {},          # 自定义状态词映射：{"变体词": "标准状态"}，如 {"搁置": "已滞后"}
 }
 
 # 数值型字段（int）—— 颜色字段用字符串
@@ -36,6 +40,13 @@ _NUMERIC_FIELDS = {"delay_days_danger", "risk_near_end_days", "slow_progress_pct
 _COLOR_FIELDS = {"color_risk", "color_warning", "color_normal"}
 _SELECT_FIELDS = {"progress_curve"}  # 枚举型字段
 _SELECT_OPTIONS = {"progress_curve": ["linear", "s_curve"]}
+_LIST_FIELDS = {"ignore_keywords"}            # 字符串列表字段
+_DICT_FIELDS = {"column_aliases", "status_words"}  # 字符串→字符串映射字段
+
+# 允许的列名映射目标字段
+FIELD_NAMES = ("name", "owner", "progress", "status", "plan_start", "plan_end", "actual_end", "note")
+# 允许的标准状态值（状态词映射目标）
+STATUS_VALUES = ("已完成", "进行中", "未开始", "已滞后", "有风险")
 
 # 字段元信息（供面板展示说明）
 RULE_META = {
@@ -49,6 +60,12 @@ RULE_META = {
                        "options": [{"value": "linear", "label": "线性（匀速推进）"},
                                    {"value": "s_curve", "label": "S 型（前期慢、后期快）"}],
                        "desc": "目标进度的计算方式。S 型更贴近真实项目节奏，可减少前期任务被误报偏慢"},
+    "ignore_keywords": {"label": "忽略词库", "unit": "", "type": "keywords",
+                        "desc": "每行一个词：文本行/任务名命中该词则不作为任务（如「下周重点」「整体推进」）。删除误抓任务后会自动回写到这里"},
+    "column_aliases": {"label": "自定义列名映射", "unit": "", "type": "mapping",
+                       "desc": "每行一条，格式：表头名=字段，字段可选：" + "/".join(FIELD_NAMES) + "（如 完成百分比=progress）"},
+    "status_words": {"label": "自定义状态词映射", "unit": "", "type": "mapping",
+                     "desc": "每行一条，格式：变体词=标准状态，标准状态可选：" + "/".join(STATUS_VALUES) + "（如 搁置=已滞后）"},
     "color_risk": {"label": "风险标注颜色", "unit": "", "type": "color",
                    "desc": "标记「风险」任务的背景/边框颜色", "default": "#C0504D"},
     "color_warning": {"label": "关注标注颜色", "unit": "", "type": "color",
@@ -75,12 +92,52 @@ def _normalize(rules: Dict[str, Any]) -> Dict[str, Any]:
                 out[k] = v
             else:
                 out[k] = default
+        elif k in _LIST_FIELDS:
+            # 忽略词：字符串列表，逐条清洗去空
+            if isinstance(v, list):
+                out[k] = [str(x).strip() for x in v if str(x).strip()]
+            else:
+                out[k] = []
+        elif k in _DICT_FIELDS:
+            # 映射字段：{源: 目标}，校验目标合法
+            if isinstance(v, dict):
+                cleaned = {}
+                for src, dst in v.items():
+                    src_s, dst_s = str(src).strip(), str(dst).strip()
+                    if not src_s or not dst_s:
+                        continue
+                    if k == "column_aliases" and dst_s not in FIELD_NAMES:
+                        continue
+                    if k == "status_words" and dst_s not in STATUS_VALUES:
+                        continue
+                    cleaned[src_s] = dst_s
+                out[k] = cleaned
+            else:
+                out[k] = {}
         else:
             try:
                 out[k] = int(float(v))
             except (TypeError, ValueError):
                 out[k] = default
     return out
+
+
+def custom_ignore_keywords(rules: Dict[str, Any] | None = None) -> List[str]:
+    """忽略词（含默认值合并）。"""
+    r = rules or load_rules()
+    return list(r.get("ignore_keywords") or [])
+
+
+def custom_column_aliases(rules: Dict[str, Any] | None = None) -> Dict[str, str]:
+    """自定义列名映射：{表头: 字段}。"""
+    r = rules or load_rules()
+    return dict(r.get("column_aliases") or {})
+
+
+def custom_status_words(rules: Dict[str, Any] | None = None) -> Dict[str, str]:
+    """自定义状态词映射：{变体: 标准}。"""
+    r = rules or load_rules()
+    return dict(r.get("status_words") or {})
 
 
 def load_rules() -> Dict[str, Any]:

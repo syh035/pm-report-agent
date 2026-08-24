@@ -33,12 +33,18 @@ _STATUS_NORM = {
 }
 
 
-def normalize_status(raw: str) -> str:
-    """把文件里的状态文本（含变体）归一化为标准状态；无法识别返回原文本。"""
+def normalize_status(raw: str, extra: Dict[str, str] | None = None) -> str:
+    """把文件里的状态文本（含变体）归一化为标准状态；无法识别返回原文本。
+    extra：用户自定义状态词映射（规则库 status_words）。"""
     s = (raw or "").strip()
     if not s:
         return ""
-    return _STATUS_NORM.get(s, s)
+    m = _STATUS_NORM.get(s)
+    if m:
+        return m
+    if extra:
+        return extra.get(s, s)
+    return s
 
 
 # 风险等级排序（不能用字符串 max()：中文比较会出错，如 max("正常","关注") 会错误返回"正常"）
@@ -149,9 +155,10 @@ def _eval_task(t: Task, today: date | None = None, rules: Dict | None = None) ->
     if not t.name:
         return st
 
-    # 状态归一化：显式状态（含变体词）优先；无显式状态时按进度/完成日期推导
+    # 状态归一化：显式状态（含变体词+用户自定义词）优先；无显式状态时按进度/完成日期推导
     raw_status = (t.status or "").strip()
-    explicit = normalize_status(raw_status) if raw_status else ""
+    extra_words = rules.get("status_words") or {}   # 用户自定义状态词（规则库）
+    explicit = normalize_status(raw_status, extra_words) if raw_status else ""
     if explicit in (STATUS_DONE, STATUS_DELAYED, STATUS_RISK):
         # 文件里明确标注的「已完成/已滞后/有风险」优先（人工判断 > 自动推导）
         status = explicit
@@ -242,7 +249,7 @@ def _apply_dependencies(stats: "ProjectStats") -> None:
 
 
 def _health_check(stats: "ProjectStats") -> Dict:
-    """数据体检：统计缺失关键字段的任务，便于用户补数据。"""
+    """数据体检：统计缺失关键字段/异常数据的任务，便于用户补数据。"""
     tss = stats.task_stats
     h = {
         "total": stats.total_tasks,
@@ -251,6 +258,9 @@ def _health_check(stats: "ProjectStats") -> Dict:
         "missing_plan_start": [ts.task.name for ts in tss if ts.task.plan_start is None],
         "missing_plan_end": [ts.task.name for ts in tss if ts.task.plan_end is None],
         "over_progress": [ts.task.name for ts in tss if (ts.task.progress or 0) > 100],
+        "date_inverted": [ts.task.name for ts in tss
+                          if ts.task.plan_start and ts.task.plan_end and ts.task.plan_end < ts.task.plan_start],
+        "short_name": [ts.task.name for ts in tss if ts.task.name and len(ts.task.name) <= 1],
     }
     return h
 
@@ -295,8 +305,16 @@ def analyze(project: Project, today: date | None = None, rules: Dict | None = No
         stats.task_stats.append(ts)
 
     stats.avg_progress = round(prog_sum / stats.total_tasks, 1)
-    # 完成率 = 已完成任务数 / 总数
-    stats.completion_rate = round(stats.done_count / stats.total_tasks * 100, 1)
+    # 完成率：默认 已完成数/总数；若配置了任务权重（≠1），按权重计算
+    wsum = sum(t.weight for t in project.tasks if t.weight and t.weight > 0)
+    if wsum and abs(wsum - stats.total_tasks) > 1e-9:
+        done_weight = sum(ts.task.weight for ts in stats.task_stats if ts.status_norm == STATUS_DONE)
+        stats.completion_rate = round(done_weight / wsum * 100, 1)
+        wprog = sum((ts.task.progress or 0.0) * ts.task.weight for ts in stats.task_stats)
+        stats.avg_progress = round(wprog / wsum, 1)
+    else:
+        # 完成率 = 已完成任务数 / 总数
+        stats.completion_rate = round(stats.done_count / stats.total_tasks * 100, 1)
     # 依赖风险传递（先于风险统计执行，使传递来的「关注」计入风险数）
     _apply_dependencies(stats)
     # 风险任务数（level != 正常）

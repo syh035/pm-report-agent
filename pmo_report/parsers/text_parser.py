@@ -105,21 +105,29 @@ def _extract_name(line: str) -> str:
     if m_owner_tail:
         cand = name[:m_owner_tail.start()].strip()
         # 如果名字还有明显任务词，就砍掉这个疑似人名
-        if re.search(r"(开发|模块|编写|部署|验收|测试|评审|设计|搭建|文档|接口|需求|系统|模块|上线|联调)", cand):
+        if re.search(r"(开发|模块|编写|部署|验收|测试|评审|设计|搭建|文档|接口|需求|系统|上线|联调|重构|报表|优化|升级|迁移|接入|改造)", cand):
             name = cand
     # 去掉可能残留的冒号/空格
     name = re.sub(r"[:：]\s*$", "", name).strip()
     return name[:50]
 
 
-def _rule_parse(text: str) -> List[Task]:
-    """用规则把文本切成候选任务。主要识别带进度百分比的条目。"""
+def _rule_parse(text: str, ignore: List[str] | None = None) -> tuple:
+    """用规则把文本切成候选任务。主要识别带进度百分比的条目。
+    返回 (tasks, ambiguous)：
+      tasks     —— 命中的任务
+      ambiguous —— 有任务特征但证据不足被过滤的行（供 AI 兜底，见 parse_docx/parse_pdf）
+    ignore     —— 忽略词列表（规则库 ignore_keywords），命中则整行跳过"""
+    ignore = ignore or []
     tasks: List[Task] = []
+    ambiguous: List[str] = []
     seen = set()
 
     for raw_line in text.splitlines():
         line = raw_line.strip()
         if not line:
+            continue
+        if any(kw in line for kw in ignore):   # 用户忽略词：整行跳过
             continue
 
         m_pct = re.search(r"(\d{1,3})\s*%", line)
@@ -127,8 +135,17 @@ def _rule_parse(text: str) -> List[Task]:
         m_status = re.search(r"(已完成|完成|已上线|进行中|未开始|待开始|有风险|风险|已滞后|已交付)", line)
         # 带有一个动作状态的词，更像任务条目（过滤纯标题/段落）
         has_action = bool(re.search(r"(负责|牵头|进度|完成|开发|编写|上线|部署|验收|测试|评审|推进|启动|完成度)", line))
+        is_bullet = bool(_BULLET.match(line))
 
-        if (_BULLET.match(line) or m_pct or m_date or m_status) and (m_pct or m_status or has_action):
+        if is_bullet:
+            # 项目符号行：有百分比/状态词/动作词即视为任务条目
+            need = m_pct or m_status or has_action
+        else:
+            # 非项目符号行：必须有"硬证据"（百分比/日期/负责人模式），
+            # 防止"下周重点：完成联调并准备上线发布"这类纯叙述被误抓
+            need = m_pct or m_date or bool(_extract_owner(line))
+
+        if (is_bullet or m_pct or m_date or m_status) and need:
             owner = _extract_owner(line)
             name = _extract_name(line)
             if not name or name in seen:
@@ -160,7 +177,11 @@ def _rule_parse(text: str) -> List[Task]:
                 d = parse_date(m_date.group(1))
                 t.plan_end = d or t.plan_end
             tasks.append(t)
-    return tasks
+        elif has_action or m_status or m_pct:
+            # 有任务特征但证据不足：记为模糊行，供 AI 兜底（不花规则层成本）
+            if line not in ambiguous:
+                ambiguous.append(line)
+    return tasks, ambiguous
 
 
 def _candidate_text(tasks: List[Task], max_chars: int = 3000) -> str:
@@ -174,16 +195,30 @@ def _candidate_text(tasks: List[Task], max_chars: int = 3000) -> str:
     return "\n".join(lines)[:max_chars]
 
 
+def _ai_candidate_text(tasks: List[Task], ambiguous: List[str], max_chars: int = 3000) -> str:
+    """AI 兜底的候选文本 = 规则命中行 + 模糊行（仅这些行，控制 Token）。"""
+    lines = []
+    for t in tasks:
+        src = (t.note or t.name or "").strip()
+        if src and src not in lines:
+            lines.append(src)
+    for a in ambiguous:
+        if a not in lines:
+            lines.append(a)
+    return "\n".join(lines)[:max_chars]
+
+
 def parse_docx(path: str, project_name: str = "", use_ai: bool = True) -> Project:
     text = _extract_text_docx(path)
-    tasks = _rule_parse(text)
+    from ..rules import custom_ignore_keywords
+    tasks, ambiguous = _rule_parse(text, ignore=custom_ignore_keywords())
     proj = Project(name=project_name, tasks=tasks)
 
-    # AI 提炼增强（可选）：只送规则预筛的候选行，失败保留规则结果
-    if use_ai and tasks:
+    # AI 提炼增强（可选）：规则命中行 + 模糊行送 AI（仅模糊行成本可控），失败保留规则结果
+    if use_ai and (tasks or ambiguous):
         try:
             from ..ai import enrich_tasks_from_text
-            cand = _candidate_text(tasks)
+            cand = _ai_candidate_text(tasks, ambiguous)
             if cand:
                 enriched = enrich_tasks_from_text(cand, tasks)
                 if enriched:
@@ -195,12 +230,13 @@ def parse_docx(path: str, project_name: str = "", use_ai: bool = True) -> Projec
 
 def parse_pdf(path: str, project_name: str = "", use_ai: bool = True) -> Project:
     text = _extract_text_pdf(path)
-    tasks = _rule_parse(text)
+    from ..rules import custom_ignore_keywords
+    tasks, ambiguous = _rule_parse(text, ignore=custom_ignore_keywords())
     proj = Project(name=project_name, tasks=tasks)
-    if use_ai and tasks:
+    if use_ai and (tasks or ambiguous):
         try:
             from ..ai import enrich_tasks_from_text
-            cand = _candidate_text(tasks)
+            cand = _ai_candidate_text(tasks, ambiguous)
             if cand:
                 enriched = enrich_tasks_from_text(cand, tasks)
                 if enriched:
