@@ -211,8 +211,12 @@ def _ai_candidate_text(tasks: List[Task], ambiguous: List[str], max_chars: int =
 def parse_docx(path: str, project_name: str = "", use_ai: bool = True) -> Project:
     text = _extract_text_docx(path)
     from ..rules import custom_ignore_keywords
-    tasks, ambiguous = _rule_parse(text, ignore=custom_ignore_keywords())
+    ignore = custom_ignore_keywords()
+    tasks, ambiguous = _rule_parse(text, ignore=ignore)
     proj = Project(name=project_name, tasks=tasks)
+    ignored = sum(1 for line in text.splitlines() if any(kw in line for kw in ignore))
+    proj.parse_stats = {"rule_hits": len(tasks), "ambiguous": len(ambiguous),
+                        "ignored": ignored, "ai_used": False}
 
     # AI 提炼增强（可选）：规则命中行 + 模糊行送 AI（仅模糊行成本可控），失败保留规则结果
     if use_ai and (tasks or ambiguous):
@@ -220,9 +224,11 @@ def parse_docx(path: str, project_name: str = "", use_ai: bool = True) -> Projec
             from ..ai import enrich_tasks_from_text
             cand = _ai_candidate_text(tasks, ambiguous)
             if cand:
+                proj.rule_snapshot = [t.to_dict() for t in tasks]   # 供 diff 视图
                 enriched = enrich_tasks_from_text(cand, tasks)
-                if enriched:
+                if enriched and enriched is not tasks:
                     proj.tasks = enriched
+                proj.parse_stats["ai_used"] = True
         except Exception:
             pass  # AI 失败则保留规则结果
     return proj
@@ -231,16 +237,22 @@ def parse_docx(path: str, project_name: str = "", use_ai: bool = True) -> Projec
 def parse_pdf(path: str, project_name: str = "", use_ai: bool = True) -> Project:
     text = _extract_text_pdf(path)
     from ..rules import custom_ignore_keywords
-    tasks, ambiguous = _rule_parse(text, ignore=custom_ignore_keywords())
+    ignore = custom_ignore_keywords()
+    tasks, ambiguous = _rule_parse(text, ignore=ignore)
     proj = Project(name=project_name, tasks=tasks)
+    ignored = sum(1 for line in text.splitlines() if any(kw in line for kw in ignore))
+    proj.parse_stats = {"rule_hits": len(tasks), "ambiguous": len(ambiguous),
+                        "ignored": ignored, "ai_used": False}
     if use_ai and (tasks or ambiguous):
         try:
             from ..ai import enrich_tasks_from_text
             cand = _ai_candidate_text(tasks, ambiguous)
             if cand:
+                proj.rule_snapshot = [t.to_dict() for t in tasks]
                 enriched = enrich_tasks_from_text(cand, tasks)
-                if enriched:
+                if enriched and enriched is not tasks:
                     proj.tasks = enriched
+                proj.parse_stats["ai_used"] = True
         except Exception:
             pass
     return proj

@@ -51,6 +51,52 @@ def _write_json(path: str, data) -> None:
         pass
 
 
+# ---------- AI 配置（模型 / API 地址，仅存本地 keys.json，gitignored） ----------
+DEFAULT_MODEL = "deepseek-chat"
+DEFAULT_BASE_URL = "https://api.deepseek.com"
+SUPPORTED_MODELS = [
+    {"value": "deepseek-chat", "label": "deepseek-chat（通用，性价比高，推荐）"},
+    {"value": "deepseek-reasoner", "label": "deepseek-reasoner（推理增强，更贵更慢，综述更深刻）"},
+]
+
+
+def ai_config() -> Dict[str, str]:
+    """返回当前生效的 AI 配置（环境变量可覆盖 key；模型/地址从本地文件读）。"""
+    cfg = _read_keys_file()
+    model = (cfg.get("model") or "").strip() or DEFAULT_MODEL
+    base_url = (cfg.get("base_url") or "").strip().rstrip("/") or DEFAULT_BASE_URL
+    return {"model": model, "base_url": base_url}
+
+
+def save_ai_config(model: str, base_url: str) -> Dict[str, str]:
+    """保存模型与 API 地址到本地 keys.json（与 Key 同文件，均 gitignored）。"""
+    model = (model or "").strip() or DEFAULT_MODEL
+    base_url = (base_url or "").strip().rstrip("/") or DEFAULT_BASE_URL
+    if base_url.startswith("http://") or base_url.startswith("https://"):
+        base_url = base_url.rstrip("/")
+    else:
+        base_url = DEFAULT_BASE_URL
+    cfg = _read_keys_file()
+    cfg["model"] = model
+    cfg["base_url"] = base_url
+    os.makedirs(CONFIG_DIR, exist_ok=True)
+    with open(KEYS_FILE, "w", encoding="utf-8") as f:
+        json.dump(cfg, f, ensure_ascii=False, indent=2)
+    try:
+        os.chmod(KEYS_FILE, 0o600)
+    except Exception:
+        pass
+    return ai_config()
+
+
+def get_model() -> str:
+    return ai_config()["model"]
+
+
+def get_base_url() -> str:
+    return ai_config()["base_url"]
+
+
 # ---------- AI 结果缓存（相同输入不重复付费） ----------
 def _cache_get(key: str) -> Optional[str]:
     store = _read_json(CACHE_FILE, {})
@@ -72,8 +118,8 @@ def _cache_set(key: str, value: str) -> None:
     _write_json(CACHE_FILE, store)
 
 
-def _cache_key(site: str, model: str, messages: List[Dict]) -> str:
-    raw = json.dumps({"site": site, "model": model, "messages": messages}, ensure_ascii=False)
+def _cache_key(site: str, model: str, messages: List[Dict], base_url: str = "") -> str:
+    raw = json.dumps({"site": site, "model": model, "base_url": base_url, "messages": messages}, ensure_ascii=False)
     return hashlib.sha1(raw.encode("utf-8")).hexdigest()
 
 
@@ -202,25 +248,26 @@ def test_api_key(api_key: Optional[str] = None) -> Dict[str, object]:
         return {"ok": False, "error": str(e)}
 
 
-DEEPSEEK_URL = "https://api.deepseek.com/chat/completions"
-DEFAULT_MODEL = "deepseek-chat"
-
-
 def call_deepseek(
     messages: List[Dict[str, str]],
-    model: str = DEFAULT_MODEL,
+    model: str | None = None,
     temperature: float = 0.6,
     max_tokens: int = 2000,
     api_key: Optional[str] = None,
     site: str = "ai",
     retries: int = 1,
 ) -> str:
-    """调用 DeepSeek，返回文本。若未配置 key 抛 RuntimeError。
+    """调用 AI 接口（模型/地址可在设置页配置，默认 deepseek-chat @ api.deepseek.com）。
+    返回文本。若未配置 key 抛 RuntimeError。
     网络类错误（超时/连接）自动重试 retries 次；HTTP 错误（401 等）不重试。
     每次成功调用记录 Token 用量。"""
     key = api_key or get_api_key()
     if not key:
         raise RuntimeError("未配置 DeepSeek API Key。请设置环境变量 DEEPSEEK_API_KEY 或编辑 config/keys.json")
+
+    model = model or get_model()
+    base_url = get_base_url()
+    url = base_url + "/chat/completions" if not base_url.endswith("/chat/completions") else base_url
 
     payload = {
         "model": model,
@@ -234,7 +281,7 @@ def call_deepseek(
     last_err = None
     for attempt in range(retries + 1):
         try:
-            resp = requests.post(DEEPSEEK_URL, json=payload, headers=headers, timeout=60)
+            resp = requests.post(url, json=payload, headers=headers, timeout=60)
             resp.raise_for_status()
             data = resp.json()
             usage = data.get("usage") or {}
@@ -253,8 +300,9 @@ def call_deepseek(
 
 def call_with_cache(site: str, messages: List[Dict[str, str]], **kw) -> str:
     """带磁盘缓存的调用：相同输入命中缓存则 0 Token，否则调用并写入缓存。"""
-    model = kw.get("model", DEFAULT_MODEL)
-    key = _cache_key(site, model, messages)
+    model = kw.get("model") or get_model()
+    base_url = get_base_url()
+    key = _cache_key(site, model, messages, base_url)
     hit = _cache_get(key)
     if hit is not None:
         _record_usage(site, 0, 0, cached=True)
@@ -292,23 +340,40 @@ def enrich_tasks_from_text(text: str, fallback_tasks: List[Task], max_chars: int
         m = re.search(r"\[.*\]", out, re.S)
         if not m:
             return fallback_tasks
-        data = json.loads(m.group(0))
+        try:
+            data = json.loads(m.group(0))
+        except Exception:
+            return fallback_tasks
+        if not isinstance(data, list):
+            return fallback_tasks
+        # Schema 严格校验（借鉴 schema-first LLM 思路）：非法条目丢弃并计数，防止半截数据污染统计
+        _VALID_STATUS = {"已完成", "进行中", "未开始", "已滞后", "有风险"}
         tasks = []
+        rejected = 0
         for item in data:
-            t = Task(
-                name=str(item.get("name", "")).strip(),
-                owner=str(item.get("owner", "")).strip(),
-                progress=item.get("progress"),
-                status=str(item.get("status", "")).strip(),
-                note=str(item.get("note", "")).strip(),
-            )
-            if t.name:
-                # plan_end 简单解析
-                pe = item.get("plan_end")
-                if pe:
-                    from .parsers._date_util import parse_date
-                    t.plan_end = parse_date(pe)
-                tasks.append(t)
+            if not isinstance(item, dict):
+                rejected += 1
+                continue
+            name = str(item.get("name") or "").strip()
+            if not name or len(name) < 2:
+                rejected += 1
+                continue
+            t = Task(name=name, owner=str(item.get("owner") or "").strip(),
+                     note=str(item.get("note") or "").strip())
+            p = item.get("progress")
+            if p is not None:
+                try:
+                    pv = float(p)
+                    t.progress = None if pv < 0 or pv > 100 else (pv if pv > 1 else pv * 100)
+                except (TypeError, ValueError):
+                    t.progress = None
+            s = str(item.get("status") or "").strip()
+            t.status = s if s in _VALID_STATUS else ""
+            pe = item.get("plan_end")
+            if pe:
+                from .parsers._date_util import parse_date
+                t.plan_end = parse_date(str(pe))
+            tasks.append(t)
         return tasks if tasks else fallback_tasks
     except Exception:
         return fallback_tasks

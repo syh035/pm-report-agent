@@ -31,6 +31,7 @@ COLUMN_ALIASES = {
     "progress":   ["进度", "当前进度", "完成率", "progress", "percent", "pct", "状态进度",
                    "完成进度", "进度百分比", "进度%", "progress_pct", "当前完成率", "完成率%"],
     "status":     ["状态", "status", "当前状态", "阶段", "任务状态", "进展"],
+    "depends_on": ["依赖任务", "依赖", "前置任务", "前置", "前驱", "depends_on", "dependency", "前置依赖"],
     "note":       ["备注", "说明", "note", "备注说明", "detail", "详情", "备注信息", "补充说明", "描述"],
 }
 
@@ -98,6 +99,7 @@ def _row_to_task(row: pd.Series, mapping: Dict[str, str]) -> Task:
             t.status = STATUS_IN_PROGRESS
         else:
             t.status = STATUS_NOT_STARTED
+    t.depends_on = str(get("depends_on", "")).strip() if get("depends_on") else ""
     t.note = str(get("note", "")) if get("note") else ""
     return t
 
@@ -183,10 +185,14 @@ def _df_to_project(df: pd.DataFrame, custom_rules: Dict[str, str] | None = None)
     df = df.dropna(how="all")                          # 去掉全空行
     mapping = _map_columns(df, extra_aliases=extra_aliases)
     tasks: List[Task] = []
+    ignored = 0
     for _, row in df.iterrows():
         t = _row_to_task(row, mapping)
         if t.name:
             if any(kw in t.name for kw in ignore):   # 用户忽略词：任务名命中则跳过
+                ignored += 1
                 continue
             tasks.append(t)
-    return Project(tasks=tasks)
+    proj = Project(tasks=tasks)
+    proj.parse_stats = {"rule_hits": len(tasks), "ambiguous": 0, "ignored": ignored, "ai_used": False}
+    return proj

@@ -72,9 +72,56 @@ def test_enrich_fallback():
     print("✅ 空文本回退：不调用 AI")
 
 
+def test_enrich_schema_validation():
+    """AI 提炼 schema 校验：非法条目被拒绝/钳制，不污染统计。"""
+    from pmo_report.models import Task
+    ai._write_json(ai.CACHE_FILE, {})
+
+    def fake_call(messages, **kw):
+        ai._record_usage(kw.get("site", "ai"), 10, 5)
+        return ('[{"name":"好任务","progress":50,"status":"进行中"},'
+                '{"name":"","progress":120},'
+                '{"name":"坏进度","progress":999},'
+                '{"name":"坏状态","progress":0.5,"status":"随便写"}]')
+
+    ai.call_deepseek = fake_call
+    tasks = ai.enrich_tasks_from_text("候选行", [Task(name="好任务")])
+    by_name = {t.name: t for t in tasks}
+    assert "好任务" in by_name, list(by_name)
+    assert by_name["好任务"].progress == 50.0
+    assert by_name["好任务"].status == "进行中"
+    # 进度 999 超界 → 钳制为 None；0.5 → 50；状态非法 → 置空
+    assert by_name["坏进度"].progress is None
+    assert by_name["坏状态"].progress == 50.0
+    assert by_name["坏状态"].status == ""
+    assert "" not in by_name, "空任务名应被拒绝"
+    print("✅ 提炼 schema 校验")
+
+
+def test_ai_config_defaults():
+    """AI 配置默认值（模型/接口），不依赖外部状态。"""
+    import importlib
+    orig = dict(ai._read_keys_file())
+    try:
+        ai._write_json(ai.KEYS_FILE, {"deepseek_api_key": "sk-placeholder"})
+        assert ai.get_model() == "deepseek-chat"
+        assert ai.get_base_url() == "https://api.deepseek.com"
+        # 保存自定义配置后生效
+        ai.save_ai_config("deepseek-reasoner", "https://api.deepseek.com")
+        assert ai.get_model() == "deepseek-reasoner"
+        # 非法地址回落默认
+        ai.save_ai_config("deepseek-chat", "not-a-url")
+        assert ai.get_base_url() == "https://api.deepseek.com"
+        print("✅ AI 模型/接口配置默认值与校验")
+    finally:
+        ai._write_json(ai.KEYS_FILE, orig)
+
+
 if __name__ == "__main__":
     test_cache_and_usage()
     test_cache_different_input()
     test_candidate_text()
     test_enrich_fallback()
+    test_enrich_schema_validation()
+    test_ai_config_defaults()
     print("\n全部通过 ✅")
