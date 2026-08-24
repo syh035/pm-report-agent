@@ -1,0 +1,59 @@
+{
+  "file": "examples/input/进度表_示例.csv",
+  "tasks": [
+    {
+      "name": "财务模块开发",
+      "owner": "张三",
+      "progress": 60.0,
+      "status": "进行中",
+      "plan_start": "2026-08-01",
+      "plan_end": "2026-08-15",
+      "note": "核心模块，联调中"
+    },
+    {
+      "name": "接口联调",
+      "owner": "李四",
+      "progress": 100.0,
+      "status": "已完成",
+      "plan_start": "2026-08-05",
+      "plan_end": "2026-08-20",
+      "note": "已上线"
+    },
+    {
+      "name": "测试用例编写",
+      "owner": "王五",
+      "progress": 30.0,
+      "status": "进行中",
+      "plan_start": "2026-08-10",
+      "plan_end": "2026-08-25",
+      "note": "进度偏慢"
+    },
+    {
+      "name": "需求评审",
+      "owner": "赵六",
+      "progress": 100.0,
+      "status": "已完成",
+      "plan_start": "2026-07-25",
+      "plan_end": "2026-08-05",
+      "note": "无"
+    },
+    {
+      "name": "文档编写",
+      "owner": "张三",
+      "progress": 0.0,
+      "status": "未开始",
+      "plan_start": "2026-08-15",
+      "plan_end": "2026-08-30",
+      "note": "待开始"
+    },
+    {
+      "name": "环境部署",
+      "owner": "李四",
+      "progress": 50.0,
+      "status": "进行中",
+      "plan_start": "2026-08-18",
+      "plan_end": "2026-08-22",
+      "note": "有风险，依赖外部"
+    }
+  ]
+}

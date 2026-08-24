@@ -1,0 +1,95 @@
+{
+  "file": "examples/input/样本测试集.csv",
+  "tasks": [
+    {
+      "name": "登录模块开发",
+      "owner": "张三",
+      "progress": 100.0,
+      "status": "已完成",
+      "plan_start": "2026-07-20",
+      "plan_end": "2026-08-05",
+      "note": "已上线"
+    },
+    {
+      "name": "支付模块联调",
+      "owner": "李四",
+      "progress": 90.0,
+      "status": "进行中",
+      "plan_start": "2026-08-01",
+      "plan_end": "2026-08-15",
+      "note": "正常推进中"
+    },
+    {
+      "name": "订单列表开发",
+      "owner": "王五",
+      "progress": 60.0,
+      "status": "进行中",
+      "plan_start": "2026-08-05",
+      "plan_end": "2026-08-20",
+      "note": "进度正常"
+    },
+    {
+      "name": "库存查询模块",
+      "owner": "赵六",
+      "progress": 100.0,
+      "status": "已完成",
+      "plan_start": "2026-08-10",
+      "plan_end": "2026-08-18",
+      "note": "已交付"
+    },
+    {
+      "name": "报表导出功能",
+      "owner": "张三",
+      "progress": 30.0,
+      "status": "进行中",
+      "plan_start": "2026-08-12",
+      "plan_end": "2026-08-25",
+      "note": "进度偏慢"
+    },
+    {
+      "name": "权限控制模块",
+      "owner": "李四",
+      "progress": 50.0,
+      "status": "有风险",
+      "plan_start": "2026-08-14",
+      "plan_end": "2026-08-22",
+      "note": "依赖外部组件"
+    },
+    {
+      "name": "前端页面优化",
+      "owner": "王五",
+      "progress": 0.0,
+      "status": "未开始",
+      "plan_start": "2026-08-15",
+      "plan_end": "2026-08-30",
+      "note": "待排期"
+    },
+    {
+      "name": "数据库迁移",
+      "owner": "赵六",
+      "progress": 100.0,
+      "status": "已完成",
+      "plan_start": "2026-07-25",
+      "plan_end": "2026-08-10",
+      "note": "已完成"
+    },
+    {
+      "name": "搜索功能开发",
+      "owner": "张三",
+      "progress": 80.0,
+      "status": "进行中",
+      "plan_start": "2026-08-08",
+      "plan_end": "2026-08-21",
+      "note": "联调中"
+    },
+    {
+      "name": "通知推送模块",
+      "owner": "李四",
+      "progress": 10.0,
+      "status": "进行中",
+      "plan_start": "2026-08-20",
+      "plan_end": "2026-09-05",
+      "note": "刚启动"
+    }
+  ]
+}

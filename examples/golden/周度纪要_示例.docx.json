@@ -1,0 +1,41 @@
+{
+  "file": "examples/input/周度纪要_示例.docx",
+  "tasks": [
+    {
+      "name": "财务模块开发",
+      "owner": "张三",
+      "progress": 60,
+      "status": "进行中",
+      "plan_start": null,
+      "plan_end": null,
+      "note": "• 财务模块开发 张三 负责，当前进度60%，预计下周完成联调"
+    },
+    {
+      "name": "接口联调 李四 已完成，",
+      "owner": "",
+      "progress": 100,
+      "status": "已完成",
+      "plan_start": null,
+      "plan_end": null,
+      "note": "• 接口联调 李四 已完成，进度100%，已上线"
+    },
+    {
+      "name": "测试用例编写 王五 进行中，",
+      "owner": "",
+      "progress": 30,
+      "status": "进行中",
+      "plan_start": null,
+      "plan_end": null,
+      "note": "• 测试用例编写 王五 进行中，进度30%"
+    },
+    {
+      "name": "环境部署",
+      "owner": "",
+      "progress": null,
+      "status": "有风险",
+      "plan_start": null,
+      "plan_end": null,
+      "note": "• 环境部署 李四 有风险，需协调外部资源"
+    }
+  ]
+}

@@ -2,14 +2,18 @@
 """
 AI 层：DeepSeek 客户端 + 周报生成 + 文本提炼。
 
-- call_deepseek()     底层 API 调用
-- generate_report()   基于统计结果 + 模板生成周报
+- call_deepseek()     底层 API 调用（记录 Token 用量，网络错误自动重试一次）
+- call_with_cache()   带磁盘缓存的调用（相同输入不重复付费）
 - enrich_tasks_from_text()  用 AI 把文本叙述提炼成结构化任务（供 text_parser 使用）
+- usage_summary()     Token 用量统计（供面板展示）
 """
 from __future__ import annotations
 import os
 import json
 import re
+import hashlib
+import time
+from datetime import datetime
 from typing import Dict, List, Optional
 
 import requests
@@ -18,20 +22,184 @@ from .models import Task
 
 
 # ---------- 配置 ----------
+CONFIG_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "config")
+KEYS_FILE = os.path.join(CONFIG_DIR, "keys.json")
+_PLACEHOLDER_HINT = "在这里填入你的 DeepSeek API Key，或改填环境变量 DEEPSEEK_API_KEY"
+_BASE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+CACHE_FILE = os.path.join(_BASE, "history", "ai_cache.json")
+USAGE_FILE = os.path.join(_BASE, "history", "token_usage.json")
+
+CACHE_TTL_SECONDS = 7 * 24 * 3600      # 缓存有效期：7 天
+CACHE_MAX_ENTRIES = 300                # 缓存条目上限（超出丢最旧）
+USAGE_MAX_ENTRIES = 200                # 用量明细保留条数
+
+
+def _read_json(path: str, default):
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            return json.load(f)
+    except Exception:
+        return default
+
+
+def _write_json(path: str, data) -> None:
+    try:
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        with open(path, "w", encoding="utf-8") as f:
+            json.dump(data, f, ensure_ascii=False, indent=2)
+    except Exception:
+        pass
+
+
+# ---------- AI 结果缓存（相同输入不重复付费） ----------
+def _cache_get(key: str) -> Optional[str]:
+    store = _read_json(CACHE_FILE, {})
+    item = store.get(key)
+    if not item or not isinstance(item, dict):
+        return None
+    if time.time() - float(item.get("ts", 0)) > CACHE_TTL_SECONDS:
+        return None
+    return item.get("v")
+
+
+def _cache_set(key: str, value: str) -> None:
+    store = _read_json(CACHE_FILE, {})
+    store[key] = {"v": value, "ts": time.time()}
+    if len(store) > CACHE_MAX_ENTRIES:
+        # 丢掉最早的条目（按 ts 排序）
+        for k in sorted(store, key=lambda k: store[k].get("ts", 0))[: len(store) - CACHE_MAX_ENTRIES]:
+            store.pop(k, None)
+    _write_json(CACHE_FILE, store)
+
+
+def _cache_key(site: str, model: str, messages: List[Dict]) -> str:
+    raw = json.dumps({"site": site, "model": model, "messages": messages}, ensure_ascii=False)
+    return hashlib.sha1(raw.encode("utf-8")).hexdigest()
+
+
+# ---------- Token 用量统计 ----------
+def _record_usage(site: str, tokens_in: int, tokens_out: int, cached: bool = False) -> None:
+    usage = _read_json(USAGE_FILE, {"total_in": 0, "total_out": 0, "calls": 0, "cache_hits": 0, "entries": []})
+    usage["total_in"] = int(usage.get("total_in", 0)) + int(tokens_in)
+    usage["total_out"] = int(usage.get("total_out", 0)) + int(tokens_out)
+    usage["calls"] = int(usage.get("calls", 0)) + (0 if cached else 1)
+    usage["cache_hits"] = int(usage.get("cache_hits", 0)) + (1 if cached else 0)
+    entries = usage.setdefault("entries", [])
+    entries.insert(0, {
+        "ts": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+        "site": site,
+        "tokens_in": int(tokens_in),
+        "tokens_out": int(tokens_out),
+        "cached": cached,
+    })
+    usage["entries"] = entries[:USAGE_MAX_ENTRIES]
+    _write_json(USAGE_FILE, usage)
+
+
+def usage_summary() -> Dict:
+    """返回 Token 用量统计（供面板展示）。"""
+    u = _read_json(USAGE_FILE, {"total_in": 0, "total_out": 0, "calls": 0, "cache_hits": 0, "entries": []})
+    return {
+        "total_in": u.get("total_in", 0),
+        "total_out": u.get("total_out", 0),
+        "calls": u.get("calls", 0),
+        "cache_hits": u.get("cache_hits", 0),
+        "entries": u.get("entries", [])[:20],
+    }
+
+
+def clear_usage() -> None:
+    try:
+        if os.path.exists(USAGE_FILE):
+            os.remove(USAGE_FILE)
+    except Exception:
+        pass
+
+
+def _read_keys_file() -> dict:
+    """读取 config/keys.json，失败返回空 dict。"""
+    try:
+        with open(KEYS_FILE, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        return data if isinstance(data, dict) else {}
+    except Exception:
+        return {}
+
+
 def get_api_key() -> Optional[str]:
-    """优先环境变量，其次配置文件 config/keys.json。"""
+    """优先环境变量，其次配置文件 config/keys.json。
+    占位提示文本（未真正配置）视为未配置。"""
     key = os.getenv("DEEPSEEK_API_KEY")
-    if key:
+    if key and key.strip():
         return key.strip()
-    cfg_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), "config", "keys.json")
-    if os.path.exists(cfg_path):
-        try:
-            with open(cfg_path, "r", encoding="utf-8") as f:
-                data = json.load(f)
-            return data.get("deepseek_api_key") or None
-        except Exception:
-            return None
+    v = (_read_keys_file().get("deepseek_api_key") or "").strip()
+    if v and v != _PLACEHOLDER_HINT and not v.startswith("在这里"):
+        return v
     return None
+
+
+def mask_key(key: str) -> str:
+    """脱敏展示：sk-abc...xyz → sk-********xyz（保留前 3 位与后 4 位）。"""
+    key = (key or "").strip()
+    if not key:
+        return ""
+    if len(key) <= 8:
+        return "*" * len(key)
+    return key[:3] + "*" * 8 + key[-4:]
+
+
+def key_status() -> Dict[str, object]:
+    """返回 Key 的脱敏状态（绝不返回完整 Key）。"""
+    env_key = os.getenv("DEEPSEEK_API_KEY")
+    if env_key and env_key.strip():
+        return {"has_key": True, "masked": mask_key(env_key.strip()), "source": "env"}
+    v = (_read_keys_file().get("deepseek_api_key") or "").strip()
+    if v and v != _PLACEHOLDER_HINT and not v.startswith("在这里"):
+        return {"has_key": True, "masked": mask_key(v), "source": "file"}
+    return {"has_key": False, "masked": None, "source": "none"}
+
+
+def save_api_key(api_key: str) -> Dict[str, object]:
+    """校验并保存 API Key 到本地 config/keys.json。
+    仅写入本机文件（已被 .gitignore 排除，不会进入 git / 上传任何服务器）。
+    环境变量方式不受影响（环境变量优先级更高）。"""
+    key = (api_key or "").strip()
+    if not key:
+        raise ValueError("API Key 不能为空")
+    if not re.match(r"^sk-[A-Za-z0-9_-]{8,}$", key):
+        raise ValueError("格式不正确：DeepSeek API Key 通常以 sk- 开头（如 sk-xxxx...），请检查是否粘贴完整")
+    os.makedirs(CONFIG_DIR, exist_ok=True)
+    with open(KEYS_FILE, "w", encoding="utf-8") as f:
+        json.dump({"deepseek_api_key": key}, f, ensure_ascii=False, indent=2)
+    try:
+        os.chmod(KEYS_FILE, 0o600)  # 仅本用户可读写，进一步防泄漏
+    except Exception:
+        pass
+    return key_status()
+
+
+def clear_api_key() -> Dict[str, object]:
+    """清除本地保存的 Key（删除 keys.json；不影响环境变量）。"""
+    try:
+        if os.path.exists(KEYS_FILE):
+            os.remove(KEYS_FILE)
+    except Exception:
+        pass
+    return key_status()
+
+
+def test_api_key(api_key: Optional[str] = None) -> Dict[str, object]:
+    """用指定 Key（缺省用已配置 Key）发一个最小请求验证有效性。"""
+    try:
+        out = call_deepseek(
+            [{"role": "user", "content": "只回复两个字：正常"}],
+            max_tokens=8,
+            temperature=0,
+            api_key=api_key,
+        )
+        return {"ok": True, "reply": (out or "")[:60]}
+    except Exception as e:
+        return {"ok": False, "error": str(e)}
 
 
 DEEPSEEK_URL = "https://api.deepseek.com/chat/completions"
@@ -44,8 +212,12 @@ def call_deepseek(
     temperature: float = 0.6,
     max_tokens: int = 2000,
     api_key: Optional[str] = None,
+    site: str = "ai",
+    retries: int = 1,
 ) -> str:
-    """调用 DeepSeek，返回文本。若未配置 key 抛 RuntimeError。"""
+    """调用 DeepSeek，返回文本。若未配置 key 抛 RuntimeError。
+    网络类错误（超时/连接）自动重试 retries 次；HTTP 错误（401 等）不重试。
+    每次成功调用记录 Token 用量。"""
     key = api_key or get_api_key()
     if not key:
         raise RuntimeError("未配置 DeepSeek API Key。请设置环境变量 DEEPSEEK_API_KEY 或编辑 config/keys.json")
@@ -58,31 +230,63 @@ def call_deepseek(
         "stream": False,
     }
     headers = {"Authorization": f"Bearer {key}", "Content-Type": "application/json"}
-    resp = requests.post(DEEPSEEK_URL, json=payload, headers=headers, timeout=60)
-    resp.raise_for_status()
-    data = resp.json()
-    return data["choices"][0]["message"]["content"].strip()
+
+    last_err = None
+    for attempt in range(retries + 1):
+        try:
+            resp = requests.post(DEEPSEEK_URL, json=payload, headers=headers, timeout=60)
+            resp.raise_for_status()
+            data = resp.json()
+            usage = data.get("usage") or {}
+            _record_usage(site,
+                          int(usage.get("prompt_tokens", 0)),
+                          int(usage.get("completion_tokens", 0)),
+                          cached=False)
+            return data["choices"][0]["message"]["content"].strip()
+        except requests.exceptions.HTTPError as e:
+            # 认证/限流等 HTTP 错误：不重试，直接抛出
+            raise e
+        except Exception as e:  # 超时/连接错误等：可重试
+            last_err = e
+    raise last_err
+
+
+def call_with_cache(site: str, messages: List[Dict[str, str]], **kw) -> str:
+    """带磁盘缓存的调用：相同输入命中缓存则 0 Token，否则调用并写入缓存。"""
+    model = kw.get("model", DEFAULT_MODEL)
+    key = _cache_key(site, model, messages)
+    hit = _cache_get(key)
+    if hit is not None:
+        _record_usage(site, 0, 0, cached=True)
+        return hit
+    text = call_deepseek(messages, site=site, **kw)
+    _cache_set(key, text)
+    return text
 
 
 # ---------- 文本提炼（供解析层调用） ----------
-def enrich_tasks_from_text(text: str, fallback_tasks: List[Task]) -> List[Task]:
-    """让 AI 从文本提炼任务。失败时仍返回 fallback_tasks。"""
+def enrich_tasks_from_text(text: str, fallback_tasks: List[Task], max_chars: int = 3000) -> List[Task]:
+    """让 AI 从文本提炼任务（建议传入规则预筛后的候选行，省 Token 且更准）。
+    失败/无结果时仍返回 fallback_tasks。结果带磁盘缓存。"""
+    if not text or not text.strip():
+        return fallback_tasks
     try:
         prompt = (
-            "你是项目管理助手。请从下面的项目文字叙述中，提炼出任务/进度条目。\n"
+            "你是项目管理助手。下面是已用规则初步筛选出的项目进度候选行，请从中提炼任务/进度条目。\n"
             "要求：输出 JSON 数组，每个元素含 name(任务名)、owner(负责人，可空)、"
             "progress(进度0-100，可空)、status(可选：已完成/进行中/未开始/已滞后/有风险)、"
             "plan_end(计划完成日期字符串，可空)、note(备注，可空)。\n"
-            "只输出 JSON，不要其他文字。\n\n"
-            f"文本：\n{text[:6000]}"
+            "只输出 JSON 数组，不要其他文字，不要编造候选行中不存在的信息。\n\n"
+            f"候选行：\n{text[:max_chars]}"
         )
-        out = call_deepseek(
+        out = call_with_cache(
+            "enrich",
             [
-                {"role": "system", "content": "你是高效的项目管理数据提炼助手。"},
+                {"role": "system", "content": "你是高效的项目管理数据提炼助手，只输出 JSON。"},
                 {"role": "user", "content": prompt},
             ],
             temperature=0.3,
-            max_tokens=1500,
+            max_tokens=800,
         )
         # 容错解析：提取 [] 部分
         m = re.search(r"\[.*\]", out, re.S)
@@ -137,13 +341,14 @@ def parse_template_to_html(text: str) -> str:
         "4. 只输出 HTML 模板本身，不要包裹代码块、不要解释。\n\n"
         f"原文：\n{text[:6000]}"
     )
-    out = call_deepseek(
+    out = call_with_cache(
+        "template",
         [
             {"role": "system", "content": "你是 HTML 排版专家，只输出干净、无 markdown 的 HTML。"},
             {"role": "user", "content": prompt},
         ],
         temperature=0.3,
-        max_tokens=3000,
+        max_tokens=1500,
     )
     # 去掉可能的代码块包裹
     out = out.strip()

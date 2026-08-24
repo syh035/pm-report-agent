@@ -30,6 +30,7 @@ import shutil
 import re
 import uuid
 import io
+import json
 from datetime import datetime
 from typing import List, Optional, Dict
 
@@ -45,18 +46,64 @@ from pmo_report.rules import load_rules
 from pmo_report import rules as rules_mod
 from pmo_report import ai as ai_mod
 from pmo_report.export import html_to_text, html_to_docx_bytes
+from pmo_report.models import Task
+from pmo_report.parsers._date_util import parse_date
 
 
 BASE = os.path.dirname(os.path.abspath(__file__))
 WEB_DIR = os.path.join(BASE, "web")
 HISTORY_DIR = os.path.join(BASE, "history")
 UPLOAD_TMP = os.path.join(BASE, "tmp_uploads")
+STATS_HISTORY_FILE = os.path.join(HISTORY_DIR, "stats_history.json")
 os.makedirs(HISTORY_DIR, exist_ok=True)
 os.makedirs(UPLOAD_TMP, exist_ok=True)
 
+
+def _load_stats_history() -> List[Dict]:
+    """读取历史统计（供周报环比）。"""
+    try:
+        with open(STATS_HISTORY_FILE, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        return data if isinstance(data, list) else []
+    except Exception:
+        return []
+
+
+def _append_stats_history(name: str, stats_dict: Dict) -> None:
+    """把一次周报统计写入历史（最多 50 条）。"""
+    h = _load_stats_history()
+    h.insert(0, {"time": datetime.now().strftime("%Y-%m-%d %H:%M"), "name": name, "stats": stats_dict})
+    h = h[:50]
+    try:
+        with open(STATS_HISTORY_FILE, "w", encoding="utf-8") as f:
+            json.dump(h, f, ensure_ascii=False, indent=2)
+    except Exception:
+        pass
+
+
+_SUMMARY_KEYS = ("total", "done", "in_progress", "not_started", "delayed", "risk",
+                 "completion_rate", "avg_progress", "avg_target_progress")
+
+
+def _compact_stats(stats_dict: Dict) -> Dict:
+    """只保留汇总数字字段，供环比使用（不存任务明细）。"""
+    return {k: stats_dict.get(k) for k in _SUMMARY_KEYS if k in stats_dict}
+
+
+def _latest_prev_stats(name: str = "") -> Optional[Dict]:
+    """取最近一期统计作为环比基准。
+    只与同名项目对比（避免拿别的项目的上一期来比，环比数字才可信）；无同名记录返回 None。"""
+    if not name:
+        return None
+    h = _load_stats_history()
+    for e in h:
+        if e.get("name") == name:
+            return e.get("stats")
+    return None
+
 ALLOWED_EXTS = {".xlsx", ".xlsm", ".csv", ".docx", ".pdf"}
 
-app = FastAPI(title="PM Report Agent", version="0.3.0")
+app = FastAPI(title="PM Report Agent", version="0.7.0")
 
 
 # ================= 工作区状态 =================
@@ -70,32 +117,44 @@ def _next_sid():
 
 
 def _summarize_sheet(sheets: list) -> Dict:
-    """把一组 sheet 的 ProjectStats 合并成汇总。"""
+    """把一组 sheet 的 ProjectStats 合并成汇总（完成率按任务数加权）。"""
     all_tasks = []
     total_avg_target = []
-    total_completion = []
+    completion_weighted = []   # (完成率, 任务数)
     total_risk = 0
     for sh in sheets:
         stats = sh.get("_stats")
         if not stats:
             continue
         all_tasks.extend(stats["tasks"])
-        total_completion.append(stats["completion_rate"])
+        n = stats.get("total", 0)
+        if n > 0:
+            completion_weighted.append((stats["completion_rate"], n))
         total_risk += stats["risk"]
         if stats.get("avg_target_progress") is not None:
             total_avg_target.append(stats["avg_target_progress"])
     total = len(all_tasks)
     done = sum(1 for t in all_tasks if (t.get("progress") or 0) >= 100)
+    # 体检汇总：合并各 sheet 的缺失项
+    health = {"total": total, "missing_progress": [], "missing_owner": [],
+              "missing_plan_start": [], "missing_plan_end": [], "over_progress": []}
+    for sh in sheets:
+        h = (sh.get("_stats") or {}).get("health") or {}
+        for k in ("missing_progress", "missing_owner", "missing_plan_start", "missing_plan_end", "over_progress"):
+            health[k].extend(h.get(k) or [])
+    w_sum = sum(w for _, w in completion_weighted)
+    completion_rate = round(sum(r * w for r, w in completion_weighted) / w_sum, 1) if w_sum else 0
     return {
         "total": total,
         "done": done,
         "in_progress": sum(1 for t in all_tasks if 0 < (t.get("progress") or 0) < 100),
         "not_started": sum(1 for t in all_tasks if (t.get("progress") or 0) <= 0),
-        "completion_rate": round(sum(total_completion) / len(total_completion), 1) if total_completion else 0,
+        "completion_rate": completion_rate,
         "avg_progress": round(sum(t.get("progress") or 0 for t in all_tasks) / total, 1) if total else 0,
         "avg_target_progress": round(sum(total_avg_target) / len(total_avg_target), 1) if total_avg_target else None,
         "risk": total_risk,
         "tasks": all_tasks,
+        "health": health,
     }
 
 
@@ -108,6 +167,7 @@ def _workspace_view() -> Dict:
             "name": sh["name"],
             "source": sh["source"],
             "stats": sh["_stats"],
+            "tasks_full": [t.to_dict() for t in sh["project"].tasks],  # 供任务校对编辑
         }
     groups_view = {}
     for gid, g in WORKSPACE["groups"].items():
@@ -126,6 +186,7 @@ class RulesIn(BaseModel):
     delay_days_danger: int
     risk_near_end_days: int
     slow_progress_pct: int
+    progress_curve: Optional[str] = "linear"
     color_risk: Optional[str] = "#C0504D"
     color_warning: Optional[str] = "#E65100"
     color_normal: Optional[str] = "#2E7D32"
@@ -152,12 +213,29 @@ class TemplateIn(BaseModel):
 class SaveReportIn(BaseModel):
     filename: str
     content: str
+    stats: Optional[Dict] = None   # 统计汇总（写入环比历史）
+
+
+class TaskUpdateIn(BaseModel):
+    tasks: List[Dict]              # 校对后的完整任务列表
+
+
+class ExportTasksIn(BaseModel):
+    sheet_ids: str = ""            # 逗号分隔；空则导出全部
 
 
 class ExporterIn(BaseModel):
     report_html: str
     format: str = "text"   # word | text
     filename: str = "周报"
+
+
+class ApiKeyIn(BaseModel):
+    api_key: str = ""
+
+
+class KeyTestIn(BaseModel):
+    api_key: Optional[str] = None  # 为空则用已保存/环境变量的 Key
 
 
 # ================= 页面 =================
@@ -258,6 +336,72 @@ def workspace_group_delete(gid: str):
     return {"ok": True, "workspace": _workspace_view()}
 
 
+@app.post("/api/workspace/sheet/{sid}/tasks")
+def update_sheet_tasks(sid: str, payload: TaskUpdateIn):
+    """保存 sheet 的任务校对结果（编辑/增删），并立即重算统计。"""
+    if sid not in WORKSPACE["sheets"]:
+        raise HTTPException(404, "sheet 不存在")
+    proj = WORKSPACE["sheets"][sid]["project"]
+    new_tasks = []
+    for item in payload.tasks or []:
+        t = Task(
+            name=str(item.get("name") or "").strip(),
+            owner=str(item.get("owner") or "").strip(),
+            status=str(item.get("status") or "").strip(),
+            note=str(item.get("note") or "").strip(),
+            depends_on=str(item.get("depends_on") or "").strip(),
+            slow_ok=bool(item.get("slow_ok")),
+        )
+        t.plan_start = parse_date(item.get("plan_start"))
+        t.plan_end = parse_date(item.get("plan_end"))
+        t.actual_end = parse_date(item.get("actual_end"))
+        p = item.get("progress")
+        try:
+            t.progress = None if p in (None, "") else float(p)
+        except (TypeError, ValueError):
+            t.progress = None
+        if t.name:
+            new_tasks.append(t)
+    proj.tasks = new_tasks
+    WORKSPACE["sheets"][sid]["_stats"] = analyze(proj, rules=load_rules()).to_dict()
+    return {"ok": True, "n_tasks": len(new_tasks), "workspace": _workspace_view()}
+
+
+@app.post("/api/export/tasks")
+def export_tasks(payload: ExportTasksIn):
+    """导出任务明细为 CSV（utf-8-sig，Excel 打开不乱码）。"""
+    import pandas as pd
+    ids = [s.strip() for s in payload.sheet_ids.split(",") if s.strip()]
+    sheets = [WORKSPACE["sheets"][sid] for sid in ids if sid in WORKSPACE["sheets"]]
+    if not sheets:
+        sheets = list(WORKSPACE["sheets"].values())
+    if not sheets:
+        raise HTTPException(400, "工作区暂无任务可导出")
+    rows = []
+    for sh in sheets:
+        for t in sh["project"].tasks:
+            d = t.to_dict()
+            rows.append({
+                "任务名称": d.get("name", ""),
+                "负责人": d.get("owner", ""),
+                "进度%": d.get("progress"),
+                "状态": d.get("status", ""),
+                "计划开始": d.get("plan_start", ""),
+                "计划完成": d.get("plan_end", ""),
+                "实际完成": d.get("actual_end", ""),
+                "依赖任务": d.get("depends_on", ""),
+                "偏慢豁免": "是" if d.get("slow_ok") else "",
+                "备注": d.get("note", ""),
+            })
+    df = pd.DataFrame(rows)
+    bio = io.BytesIO()
+    df.to_csv(bio, index=False, encoding="utf-8-sig")
+    bio.seek(0)
+    fname = f"任务明细_{datetime.now().strftime('%Y%m%d_%H%M')}.csv"
+    return StreamingResponse(bio, media_type="text/csv; charset=utf-8",
+                             headers={"Content-Disposition": _content_disposition(fname)})
+
+
 # ================= 规则 =================
 @app.get("/api/rules")
 def get_rules():
@@ -290,6 +434,47 @@ def _recompute_all():
     for sh in WORKSPACE["sheets"].values():
         if "project" in sh:
             sh["_stats"] = analyze(sh["project"], rules=rules).to_dict()
+
+
+# ================= 设置（API Key 本地管理） =================
+# 安全设计：Key 仅写入本机 config/keys.json（已被 .gitignore 排除），
+# 所有读取接口只返回脱敏信息，绝不返回完整 Key。
+@app.get("/api/settings/key")
+def get_key_setting():
+    return {"status": ai_mod.key_status()}
+
+
+@app.post("/api/settings/key")
+def save_key_setting(payload: ApiKeyIn):
+    try:
+        st = ai_mod.save_api_key(payload.api_key)
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    return {"ok": True, "status": st,
+            "note": "已保存到本地 config/keys.json（仅本机可见，不会进入 git / 不会上传）"}
+
+
+@app.post("/api/settings/key/delete")
+def delete_key_setting():
+    st = ai_mod.clear_api_key()
+    return {"ok": True, "status": st, "note": "已清除本地保存的 API Key"}
+
+
+@app.post("/api/settings/key/test")
+def test_key_setting(payload: KeyTestIn):
+    return ai_mod.test_api_key(payload.api_key or None)
+
+
+@app.get("/api/settings/tokens")
+def get_token_usage():
+    """Token 用量统计（累计 + 最近明细 + 缓存命中）。"""
+    return ai_mod.usage_summary()
+
+
+@app.post("/api/settings/tokens/clear")
+def clear_token_usage():
+    ai_mod.clear_usage()
+    return {"ok": True, "note": "已清空 Token 用量统计"}
 
 
 # ================= 模板 =================
@@ -421,21 +606,34 @@ async def generate(
 
     # 多 sheet：生成一组合并统计
     merged = _merge_stats(stats_list, name=project_name or "项目汇总", period=period)
-    result = gen.render(merged, use_ai=use_ai, rules=rules)
+    prev = _latest_prev_stats(merged.project.name)   # 环比基准（上一期统计）
+    tokens_before = ai_mod.usage_summary()
+    result = gen.render(merged, use_ai=use_ai, rules=rules, prev_stats=prev)
+    tokens_after = ai_mod.usage_summary()
     generated.append({
         "project": merged.project.name,
         "report": result["report_html"],
         "report_text": result["report_text"],
         "ai_used": result.get("ai_used", False),
         "ai_error": result.get("error"),
+        "numbers_corrected": result.get("numbers_corrected", 0),
+        "has_prev": bool(prev),
+        "delta": ReportGenerator._delta_parts(merged, prev),
+        "stats": merged.to_dict(),
         "frame": frame,
         "n_sheets": len(stats_list),
+        "tokens": {
+            "in": tokens_after["total_in"] - tokens_before["total_in"],
+            "out": tokens_after["total_out"] - tokens_before["total_out"],
+            "cache_hits": tokens_after["cache_hits"] - tokens_before["cache_hits"],
+        },
     })
     return {"generated": generated}
 
 
 def _merge_stats(stats_list, name="项目汇总", period=""):
-    """把多个 ProjectStats 合并为一个（用于分组/全工作区汇总周报）。"""
+    """把多个 ProjectStats 合并为一个（用于分组/全工作区汇总周报）。
+    完成率/平均进度按任务数加权，避免大小表权重失衡。"""
     from pmo_report.engine import ProjectStats
     from pmo_report.models import Project
     total_tasks = sum(s.total_tasks for s in stats_list)
@@ -443,8 +641,7 @@ def _merge_stats(stats_list, name="项目汇总", period=""):
     in_prog = sum(s.in_progress_count for s in stats_list)
     not_started = sum(s.not_started_count for s in stats_list)
     delayed = sum(s.delayed_count for s in stats_list)
-    rates = [s.completion_rate for s in stats_list if s.total_tasks]
-    progs = [s.avg_progress for s in stats_list if s.total_tasks]
+    weighted = [(s.completion_rate, s.total_tasks, s.avg_progress) for s in stats_list if s.total_tasks]
     targets = [s.avg_target_progress for s in stats_list if s.avg_target_progress is not None]
     risk = sum(s.risk_count for s in stats_list)
 
@@ -455,8 +652,9 @@ def _merge_stats(stats_list, name="项目汇总", period=""):
     stats.not_started_count = not_started
     stats.delayed_count = delayed
     stats.risk_count = risk
-    stats.completion_rate = round(sum(rates) / len(rates), 1) if rates else 0
-    stats.avg_progress = round(sum(progs) / len(progs), 1) if progs else 0
+    w_sum = sum(w for _, w, _ in weighted)
+    stats.completion_rate = round(sum(r * w for r, w, _ in weighted) / w_sum, 1) if w_sum else 0
+    stats.avg_progress = round(sum(p * w for _, w, p in weighted) / w_sum, 1) if w_sum else 0
     stats.avg_target_progress = round(sum(targets) / len(targets), 1) if targets else None
     # 收集所有 task_stat
     all_ts = []
@@ -527,4 +725,7 @@ def api_save_report(payload: SaveReportIn):
     safe = os.path.basename(payload.filename)
     with open(os.path.join(HISTORY_DIR, safe), "w", encoding="utf-8") as f:
         f.write(payload.content)
+    # 写入环比历史（只存汇总数字，不存任务明细）
+    if payload.stats:
+        _append_stats_history(safe, _compact_stats(payload.stats))
     return {"ok": True, "name": safe}

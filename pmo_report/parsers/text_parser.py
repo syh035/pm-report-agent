@@ -163,18 +163,31 @@ def _rule_parse(text: str) -> List[Task]:
     return tasks
 
 
+def _candidate_text(tasks: List[Task], max_chars: int = 3000) -> str:
+    """把规则解析出的候选任务行拼成精简文本，供 AI 提炼使用。
+    只送"像任务的行"，不送整篇原文 —— 省 Token 且降低噪音。"""
+    lines = []
+    for t in tasks:
+        src = (t.note or t.name or "").strip()
+        if src and src not in lines:
+            lines.append(src)
+    return "\n".join(lines)[:max_chars]
+
+
 def parse_docx(path: str, project_name: str = "", use_ai: bool = True) -> Project:
     text = _extract_text_docx(path)
     tasks = _rule_parse(text)
     proj = Project(name=project_name, tasks=tasks)
 
-    # AI 提炼增强（可选）
+    # AI 提炼增强（可选）：只送规则预筛的候选行，失败保留规则结果
     if use_ai and tasks:
         try:
             from ..ai import enrich_tasks_from_text
-            enriched = enrich_tasks_from_text(text, tasks)
-            if enriched:
-                proj.tasks = enriched
+            cand = _candidate_text(tasks)
+            if cand:
+                enriched = enrich_tasks_from_text(cand, tasks)
+                if enriched:
+                    proj.tasks = enriched
         except Exception:
             pass  # AI 失败则保留规则结果
     return proj
@@ -187,9 +200,11 @@ def parse_pdf(path: str, project_name: str = "", use_ai: bool = True) -> Project
     if use_ai and tasks:
         try:
             from ..ai import enrich_tasks_from_text
-            enriched = enrich_tasks_from_text(text, tasks)
-            if enriched:
-                proj.tasks = enriched
+            cand = _candidate_text(tasks)
+            if cand:
+                enriched = enrich_tasks_from_text(cand, tasks)
+                if enriched:
+                    proj.tasks = enriched
         except Exception:
             pass
     return proj

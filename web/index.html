@@ -93,12 +93,20 @@
       <div class="tab" data-tab="rules">规则配置</div>
       <div class="tab" data-tab="template">模板</div>
       <div class="tab" data-tab="report">周报 / 历史</div>
+      <div class="tab" data-tab="settings">设置</div>
     </div>
 
     <!-- 数据面板 -->
     <div class="panel active" id="panel-data">
       <div class="card" id="currentView" style="display:none;">
         <h2 id="viewTitle"></h2>
+        <div class="row" style="margin-bottom:10px;">
+          <button class="btn btn-outline" onclick="toggleEditTasks()">✏ 编辑任务（校对）</button>
+          <button class="btn btn-outline" onclick="exportTasks()">导出明细 CSV</button>
+          <span id="healthBadge" style="font-size:12px;color:var(--muted);"></span>
+        </div>
+        <div id="healthBox" style="display:none;margin-bottom:12px;"></div>
+        <div id="taskEditBox" style="display:none;margin-bottom:12px;"></div>
         <div class="kpi-grid" id="viewKpis"></div>
         <div class="filters" id="viewFilters"></div>
         <div style="overflow-x:auto;" id="viewTable"></div>
@@ -182,13 +190,58 @@
         <ul class="history-list" id="historyList"></ul>
       </div>
     </div>
+
+    <!-- 设置面板 -->
+    <div class="panel" id="panel-settings">
+      <div class="card">
+        <h2>DeepSeek API Key（仅保存本地）</h2>
+        <p style="font-size:12px;color:var(--muted);margin-bottom:14px;">
+          用于「AI 增强周报」「模板 AI 解析」与「Word/PDF 文本提炼」。Key 只会写入本机的
+          <code style="background:#F0F2F5;padding:1px 5px;border-radius:4px;">config/keys.json</code>
+          （已被 .gitignore 排除，不会进入 git），接口只返回脱敏信息，不会泄漏到任何服务器。
+        </p>
+        <div class="field">
+          <label>API Key</label>
+          <div class="row">
+            <input type="password" id="apiKeyInput" placeholder="sk-..." style="width:340px" autocomplete="off" spellcheck="false">
+            <button class="btn btn-primary" onclick="saveApiKey()">保存到本地</button>
+            <button class="btn btn-outline" onclick="testApiKey()">测试连接</button>
+            <button class="btn btn-danger" onclick="clearApiKey()">清除本地 Key</button>
+          </div>
+          <div class="hint" id="keyStatus" style="margin-top:8px;"></div>
+        </div>
+        <div class="msg" id="keyMsg"></div>
+      </div>
+      <div class="card">
+        <h2>说明</h2>
+        <ul style="font-size:12.5px;color:var(--muted);margin-left:18px;line-height:1.9;">
+          <li>环境变量 <code>DEEPSEEK_API_KEY</code> 优先于本地文件；两者都没配置时，AI 功能自动回退为规则引擎文案。</li>
+          <li>「测试连接」会发送一条最小请求到 DeepSeek 官方接口验证 Key 是否可用（未保存的输入不会被写入磁盘）。</li>
+          <li>清除操作只删除本地文件中的 Key，不影响系统环境变量。</li>
+        </ul>
+      </div>
+      <div class="card">
+        <h2>AI Token 用量（省钱看这里）</h2>
+        <p style="font-size:12px;color:var(--muted);margin-bottom:12px;">
+          所有 AI 结果都有本地缓存：相同数据不会重复付费。以下统计来自本机记录（约 ¥0.001/千输入 token、¥0.002/千输出 token 估算）。
+        </p>
+        <div class="kpi-grid" id="tokenKpis" style="grid-template-columns:repeat(auto-fit,minmax(140px,1fr));"></div>
+        <div class="row" style="margin-bottom:10px;">
+          <button class="btn btn-outline" onclick="loadTokenUsage()">刷新</button>
+          <button class="btn btn-danger" onclick="clearTokenUsage()">清空统计</button>
+          <span id="tokenMsg" style="font-size:12px;color:var(--muted)"></span>
+        </div>
+        <div style="font-size:12px;font-weight:600;color:var(--muted);margin-bottom:6px;">最近记录</div>
+        <div id="tokenEntries" style="max-height:220px;overflow-y:auto;"></div>
+      </div>
+    </div>
   </div>
 </div>
 
 <input type="file" id="uploadInput" multiple style="display:none" accept=".xlsx,.xlsm,.csv,.docx,.pdf">
 <script>
 const $ = id => document.getElementById(id);
-let state = { sheet:{}, groups:{}, rules:{}, current:'', lastReport:null, sortBy:'', sortAsc:true, filters:{} };
+let state = { sheet:{}, groups:{}, rules:{}, current:'', lastReport:null, sortBy:'', sortAsc:true, filters:{}, editMode:false, editTasks:[] };
 
 // ============ 工具 ============
 function esc(s){ s=s==null?'':String(s); return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
@@ -264,15 +317,127 @@ async function delGroup(gid){ if(!confirm('删除分组？（其中的 sheet 不
 function renderSheetView(sh){
   $('viewTitle').textContent = '📊 ' + (sh.name||'sheet') + ' — 单项数据';
   renderKpisFromTasks(sh.stats);
-  const tasks = (sh.stats?.tasks||[]).map(t=>({...t}));
-  renderTable(tasks, sh.name);
+  renderHealth(sh.stats?.health);
+  if(!state.editMode){
+    $('taskEditBox').style.display='none';
+    const tasks = (sh.stats?.tasks||[]).map(t=>({...t}));
+    renderTable(tasks, sh.name);
+  } else {
+    renderEditTable(sh.tasks_full||[]);
+  }
 }
 function renderGroupView(g){
   $('viewTitle').textContent = '📁 ' + (g.name||'分组') + ' — 分组汇总';
   const s = g.summary;
   $('viewKpis').innerHTML = s ? kpiHtml(s.total,'总任务',s.completion_rate+'%','完成率',s.avg_progress+'%','平均实际',s.risk,'风险项') : '<div>无数据</div>';
+  renderHealth(s ? s.health : null);
+  $('taskEditBox').style.display='none';
   const tasks = s ? s.tasks||[] : [];
   renderTable(tasks, g.name);
+}
+function renderHealth(h){
+  const box = $('healthBox'), badge = $('healthBadge');
+  if(!h){ box.style.display='none'; badge.textContent=''; return; }
+  const items = [];
+  if(h.missing_progress && h.missing_progress.length) items.push(`<b>${h.missing_progress.length}</b> 个任务缺进度`);
+  if(h.missing_owner && h.missing_owner.length) items.push(`<b>${h.missing_owner.length}</b> 个任务缺负责人`);
+  if(h.missing_plan_end && h.missing_plan_end.length) items.push(`<b>${h.missing_plan_end.length}</b> 个任务缺计划完成日期`);
+  if(h.missing_plan_start && h.missing_plan_start.length) items.push(`<b>${h.missing_plan_start.length}</b> 个任务缺计划开始日期`);
+  if(h.over_progress && h.over_progress.length) items.push(`<b>${h.over_progress.length}</b> 个任务进度超过 100%`);
+  if(!items.length){ box.style.display='none'; badge.textContent='✅ 数据完整'; return; }
+  badge.textContent = '⚠️ ' + items.join('，');
+  const dump = (label, names) => names && names.length ? `<div style="margin-top:6px"><b>${label}：</b>${names.slice(0,8).map(esc).join('、')}${names.length>8?' 等':''}</div>` : '';
+  box.style.display='block';
+  box.className='card';
+  box.innerHTML = `<div style="font-size:13px;line-height:1.7;color:#9A6B00;">${items.join('；')}。可点「✏ 编辑任务」补充后重新统计。</div>${dump('缺进度',h.missing_progress)}${dump('缺负责人',h.missing_owner)}${dump('缺计划完成',h.missing_plan_end)}${dump('缺计划开始',h.missing_plan_start)}${dump('进度超100',h.over_progress)}`;
+}
+
+// ============ 任务校对（编辑任务表） ============
+function currentSheetId(){
+  const cur = state.current;
+  return (cur && cur.startsWith('sheet:')) ? cur.split(':')[1] : null;
+}
+function toggleEditTasks(){
+  const sid = currentSheetId();
+  if(!sid){ alert('分组视图暂不支持编辑，请点击左侧单个 sheet 进行校对'); return; }
+  state.editMode = !state.editMode;
+  if(state.editMode){
+    $('viewTable').innerHTML=''; $('viewFilters').innerHTML='';
+    renderEditTable((state.sheet[sid].tasks_full)||[]);
+  } else {
+    renderTableForCurrent();
+  }
+}
+function renderEditTable(tasks){
+  const box = $('taskEditBox');
+  state.editTasks = (tasks||[]).map(t=>({
+    name:t.name||'', owner:t.owner||'', progress:t.progress, status:t.status||'',
+    plan_start:t.plan_start||'', plan_end:t.plan_end||'', actual_end:t.actual_end||'',
+    depends_on:t.depends_on||'', slow_ok:!!t.slow_ok, note:t.note||''
+  }));
+  box.style.display='block';
+  box.className='card';
+  box.innerHTML = `<div style="font-size:13px;font-weight:600;margin-bottom:8px;">任务校对（改完点「保存修改」，统计会自动重算；「偏慢豁免」勾选后该任务进度偏慢不再标红）</div>
+    <div style="overflow-x:auto;"><table id="editTaskTable">
+      <tr><th>任务名称</th><th>负责人</th><th>进度%</th><th>状态</th><th>计划开始</th><th>计划完成</th><th>依赖任务</th><th>偏慢豁免</th><th>备注</th><th></th></tr>
+    </table></div>
+    <div class="row" style="margin-top:10px;">
+      <button class="btn btn-primary" onclick="saveTasks()">保存修改</button>
+      <button class="btn btn-outline" onclick="addTaskRow()">＋ 添加任务</button>
+      <button class="btn btn-danger" onclick="toggleEditTasks()">取消</button>
+      <span id="editMsg" style="font-size:12px;color:var(--muted)"></span>
+    </div>`;
+  const tb = $('editTaskTable');
+  state.editTasks.forEach((t,i)=>{ tb.insertAdjacentHTML('beforeend', editRowHtml(t,i)); });
+}
+function editRowHtml(t,i){
+  return `<tr>
+    <td><input style="width:140px" value="${esc(t.name)}" onchange="updTask(${i},'name',this.value)"></td>
+    <td><input style="width:90px" value="${esc(t.owner)}" onchange="updTask(${i},'owner',this.value)"></td>
+    <td><input type="number" min="0" max="150" style="width:70px" value="${t.progress==null?'':t.progress}" onchange="updTask(${i},'progress',this.value)"></td>
+    <td><select onchange="updTask(${i},'status',this.value)">
+      ${['','已完成','进行中','未开始','已滞后','有风险'].map(s=>`<option value="${s}" ${t.status===s?'selected':''}>${s||'（自动）'}</option>`).join('')}
+    </select></td>
+    <td><input type="date" value="${esc(t.plan_start||'')}" onchange="updTask(${i},'plan_start',this.value)"></td>
+    <td><input type="date" value="${esc(t.plan_end||'')}" onchange="updTask(${i},'plan_end',this.value)"></td>
+    <td><input style="width:110px" placeholder="依赖的任务名" value="${esc(t.depends_on)}" onchange="updTask(${i},'depends_on',this.value)"></td>
+    <td style="text-align:center"><input type="checkbox" ${t.slow_ok?'checked':''} onchange="updTask(${i},'slow_ok',this.checked)" title="勾选后该任务进度偏慢不再标红"></td>
+    <td><input style="width:120px" value="${esc(t.note)}" onchange="updTask(${i},'note',this.value)"></td>
+    <td><button class="btn btn-danger btn-sm" style="font-size:11px;padding:2px 8px" onclick="delTaskRow(${i})">✕</button></td>
+  </tr>`;
+}
+function updTask(i,key,val){ state.editTasks[i][key]=val; }
+function addTaskRow(){
+  state.editTasks.push({name:'',owner:'',progress:null,status:'',plan_start:'',plan_end:'',actual_end:'',depends_on:'',slow_ok:false,note:''});
+  const tb = $('editTaskTable');
+  tb.insertAdjacentHTML('beforeend', editRowHtml(state.editTasks[state.editTasks.length-1], state.editTasks.length-1));
+}
+function delTaskRow(i){ state.editTasks.splice(i,1); renderEditTable(state.editTasks); }
+async function saveTasks(){
+  const sid = currentSheetId(); if(!sid) return;
+  $('editMsg').textContent='保存中...';
+  const res = await fetch('/api/workspace/sheet/'+sid+'/tasks',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({tasks:state.editTasks})});
+  const d = await res.json();
+  if(!res.ok){ $('editMsg').textContent='保存失败：'+(d.detail||''); return; }
+  $('editMsg').textContent=`已保存 ${d.n_tasks} 个任务并重新统计`;
+  await loadWorkspace();
+  selectSheet(sid);
+}
+async function exportTasks(){
+  const sid = currentSheetId();
+  let ids = sid ? sid : '';
+  if(!sid){
+    const cur = state.current;
+    if(cur && cur.startsWith('group:')){
+      const g = state.groups[cur.split(':')[1]];
+      if(g && g.sheets) ids = g.sheets.join(',');
+    }
+  }
+  const res = await fetch('/api/export/tasks',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({sheet_ids:ids})});
+  if(!res.ok){ alert('导出失败'); return; }
+  const blob = await res.blob();
+  const a = document.createElement('a'); const url = URL.createObjectURL(blob);
+  a.href=url; a.download='任务明细.csv'; a.click(); URL.revokeObjectURL(url);
 }
 function kpiHtml(v1,l1,v2,l2,v3,l3,v4,l4){
   return `<div class="kpi"><div class="v">${v1}</div><div class="l">${l1}</div></div>
@@ -285,11 +450,12 @@ function renderKpisFromTasks(stats){
     + (stats.avg_target_progress!=null?`<div class="kpi"><div class="v">${stats.avg_target_progress}%</div><div class="l">平均目标</div></div>`:'');
 }
 function renderTable(tasks, name){
-  // 筛选
+  // 筛选（状态用归一化 status_norm，与显示一致）
   const col = state.sortBy, asc = state.sortAsc;
   let f = state.filters[name] = state.filters[name]||{status:'',risk:'',owner:''};
   let rows = tasks.filter(t=>{
-    if(f.status && t.status!==f.status) return false;
+    const sn = t.status_norm || t.status || '';
+    if(f.status && sn!==f.status) return false;
     if(f.risk && t.risk_level!==f.risk) return false;
     if(f.owner && !(t.owner||'').includes(f.owner)) return false;
     return true;
@@ -304,6 +470,13 @@ function renderTable(tasks, name){
       return asc?x:-x;
     });
   }
+  // 分页（每页 100 行）
+  const PAGE_SIZE = 100;
+  state.pages = state.pages || {};
+  let pg = state.pages[name] = state.pages[name]||{page:0};
+  const pages = Math.max(1, Math.ceil(rows.length/PAGE_SIZE));
+  if(pg.page >= pages) pg.page = pages-1;
+  const pageRows = rows.slice(pg.page*PAGE_SIZE, (pg.page+1)*PAGE_SIZE);
   // 筛选控件
   $('viewFilters').innerHTML = `
     <select onchange="setFilter('${name}','status',this.value)">
@@ -313,29 +486,47 @@ function renderTable(tasks, name){
       <option value="">风险：全部</option>${['正常','关注','风险'].map(s=>`<option value="${s}" ${f.risk===s?'selected':''}>${s}</option>`).join('')}
     </select>
     <input placeholder="负责人筛选" value="${esc(f.owner)}" onchange="setFilter('${name}','owner',this.value)">
-    <span style="font-size:12px;color:var(--muted)">共 ${rows.length} 条</span>`;
+    <button class="btn btn-outline" style="font-size:12px;padding:4px 10px" onclick="resetFilters('${name}')">重置</button>
+    <span style="font-size:12px;color:var(--muted)">共 ${rows.length} 条${rows.length>PAGE_SIZE?`，第 ${pg.page+1}/${pages} 页` : ''}</span>
+    ${rows.length>PAGE_SIZE?`<button class="btn btn-outline" style="font-size:12px;padding:4px 10px" onclick="pageTable('${name}',${pg.page-1})" ${pg.page===0?'disabled':''}>‹ 上一页</button>
+    <button class="btn btn-outline" style="font-size:12px;padding:4px 10px" onclick="pageTable('${name}',${pg.page+1})" ${pg.page>=pages-1?'disabled':''}>下一页 ›</button>`:''}`;
   // 表头（带排序）
   const th=(label,key,cls)=>`<th onclick="doSort('${name}','${key}')">${label}${state.sortBy===key?(asc?' ▲':' ▼'):''}</th>`;
   let h = `<table><tr><th>#</th>${th('任务名','name')}${th('负责人','owner')}${th('实际进度','progress')}${th('目标进度','target')}<th>状态</th><th>风险</th>${th('计划完成','plan_end')}<th>说明</th></tr>`;
-  rows.forEach((t,i)=>{
+  if(!pageRows.length){
+    h += `<tr><td colspan="8" style="text-align:center;color:var(--muted);padding:24px;">无匹配任务（可调整筛选或点「重置」）</td></tr>`;
+  }
+  pageRows.forEach((t,i)=>{
     const rc = riskColor(t.risk_level||'正常');
     const rowStyle = t.risk_level==='风险'?`style="background:${tint(rc)}"`: (t.risk_level==='关注'?`style="background:${tint(rc,0.08)}"`:'');
-    h += `<tr ${rowStyle}><td>${i+1}</td>
+    const sn = t.status_norm || t.status || '-';
+    h += `<tr ${rowStyle}><td>${pg.page*PAGE_SIZE+i+1}</td>
       <td>${esc(t.name)}</td><td>${esc(t.owner)}</td>
       <td>${t.progress!=null?t.progress+'%':'-'}</td>
       <td>${t.target_progress!=null?'<b>'+t.target_progress+'%</b>':'-'}</td>
-      <td>${esc(t.status)}</td>
+      <td>${esc(sn)}</td>
       <td><span class="pill" style="background:${rc}">${t.risk_level||'正常'}</span></td>
       <td>${esc(t.plan_end||'-')}</td><td>${esc(t.risk_reason||'-')}</td></tr>`;
   });
   $('viewTable').innerHTML = h+'</table>';
+}
+function pageTable(name, page){
+  state.pages = state.pages || {};
+  state.pages[name] = state.pages[name]||{page:0};
+  state.pages[name].page = Math.max(0, page);
+  renderTableForCurrent();
+}
+function resetFilters(name){
+  state.filters[name] = {status:'',risk:'',owner:''};
+  state.pages = state.pages||{}; state.pages[name] = {page:0};
+  renderTableForCurrent();
 }
 function tint(hex, al){
   const h=hex.replace('#',''); const r=parseInt(h.substr(0,2),16),g=parseInt(h.substr(2,2),16),b=parseInt(h.substr(4,2),16);
   return `rgba(${r},${g},${b},${al==null?0.12:al})`;
 }
 function doSort(name,key){ if(state.sortBy===key){state.sortAsc=!state.sortAsc;}else{state.sortBy=key;state.sortAsc=true;} renderTableForCurrent(); }
-function setFilter(name,key,val){ state.filters[name]=state.filters[name]||{}; state.filters[name][key]=val; renderTableForCurrent(); }
+function setFilter(name,key,val){ state.filters[name]=state.filters[name]||{}; state.filters[name][key]=val; state.pages=state.pages||{}; state.pages[name]={page:0}; renderTableForCurrent(); }
 function renderTableForCurrent(){
   const cur = state.current;
   if(cur && cur.startsWith('sheet:')) renderSheetView(state.sheet[cur.split(':')[1]]);
@@ -353,6 +544,10 @@ async function loadRules(){
       html+=`<div class="field"><label>${m.label||k} <span class="color-dot" style="background:${d.rules[k]}"></span></label>
         <input type="color" id="rule_${k}" value="${d.rules[k]}" onchange="$('#rule_${k}').value=this.value">
         <div class="hint">${m.desc||''}</div></div>`;
+    }else if(m.type==='select'){
+      html+=`<div class="field"><label>${m.label||k}</label>
+        <select id="rule_${k}">${(m.options||[]).map(o=>`<option value="${o.value}" ${d.rules[k]===o.value?'selected':''}>${o.label}</option>`).join('')}</select>
+        <div class="hint">${m.desc||''}</div></div>`;
     }else{
       html+=`<div class="field"><label>${m.label||k}（${m.unit||''}）</label>
         <input type="number" id="rule_${k}" value="${d.rules[k]}" min="${m.min||0}" max="${m.max||999}">
@@ -364,6 +559,7 @@ async function loadRules(){
 async function saveRules(){
   const body={};
   ['delay_days_danger','risk_near_end_days','slow_progress_pct'].forEach(k=>{body[k]=parseInt($('rule_'+k).value)||0;});
+  body.progress_curve = $('rule_progress_curve') ? $('rule_progress_curve').value : 'linear';
   ['color_risk','color_warning','color_normal'].forEach(k=>body[k]=$('rule_'+k).value);
   const res=await fetch('/api/rules',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
   const d=await res.json();
@@ -530,7 +726,28 @@ async function parseTemplate(){
 }
 
 // ============ 周报 ============
+function currentHealth(){
+  const cur=state.current;
+  if(cur && cur.startsWith('sheet:')){
+    const sh=state.sheet[cur.split(':')[1]];
+    return sh && sh.stats ? sh.stats.health : null;
+  }
+  if(cur && cur.startsWith('group:')){
+    const g=state.groups[cur.split(':')[1]];
+    return g && g.summary ? g.summary.health : null;
+  }
+  return null;
+}
 async function generateReport(){
+  // 数据体检前置：有缺项先提示，避免基于残缺数据生成
+  const h = currentHealth();
+  if(h){
+    const missing = (h.missing_progress||[]).length + (h.missing_owner||[]).length
+                  + (h.missing_plan_end||[]).length + (h.missing_plan_start||[]).length;
+    if(missing > 0 && !confirm(`当前数据有 ${missing} 处缺项（进度/负责人/日期）。建议先点「✏ 编辑任务」补齐再生成，仍要继续吗？`)){
+      return;
+    }
+  }
   $('genMsg').className=''; $('genMsg').textContent='生成中...';
   // 先保存当前画布 blocks（若有），generate 依赖后端自动加载已存模板
   if(tplBlocks && tplBlocks.length){
@@ -558,8 +775,16 @@ async function generateReport(){
     state.lastReport=g1;
     $('reportBox').innerHTML=g1.report;
     $('exportRow').style.display='flex';
+    let msg = g1.ai_error ? ('AI未生效（'+g1.ai_error+'）已用规则文案')
+             : (g1.ai_used ? ('已用 AI 生成（汇总'+g1.n_sheets+'个sheet）')
+                           : ('已用规则引擎生成（汇总'+g1.n_sheets+'个sheet）'));
+    if(g1.numbers_corrected) msg += `；AI 文本已自动校正 ${g1.numbers_corrected} 处数字`;
+    msg += g1.has_prev ? '；已与上周对比' : '；首次生成（存入历史后下周可自动环比）';
+    if(g1.tokens && (g1.tokens.in + g1.tokens.out + g1.tokens.cache_hits) > 0){
+      msg += `；本次 AI 消耗 ${g1.tokens.in} in / ${g1.tokens.out} out tok${g1.tokens.cache_hits?'（缓存命中 '+g1.tokens.cache_hits+'）':''}`;
+    }
     $('genMsg').className=g1.ai_error?'msg err':'msg ok';
-    $('genMsg').textContent=g1.ai_error?('AI未生效（'+g1.ai_error+'）已用规则文案'): (g1.ai_used?'已用 AI 生成（汇总'+g1.n_sheets+'个sheet）':'已用规则引擎生成（汇总'+g1.n_sheets+'个sheet）');
+    $('genMsg').textContent=msg;
   }catch(e){ $('genMsg').className='msg err'; $('genMsg').textContent='生成失败:'+e.message; }
 }
 async function exportReport(format){
@@ -575,8 +800,9 @@ async function saveToHistory(){
   if(!state.lastReport){alert('先生成周报');return;}
   const ts=new Date(); const pad=n=>String(n).padStart(2,'0');
   const name=`${ts.getFullYear()}${pad(ts.getMonth()+1)}${pad(ts.getDate())}_${pad(ts.getHours())}${pad(ts.getMinutes())}_${(state.lastReport.project||'周报')}.html`;
-  await fetch('/api/save_report',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({filename:name,content:state.lastReport.report})});
-  alert('已存入历史');
+  await fetch('/api/save_report',{method:'POST',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({filename:name,content:state.lastReport.report,stats:state.lastReport.stats||null})});
+  alert('已存入历史（下次生成将自动与本周对比）');
   loadHistory();
 }
 async function loadHistory(){
@@ -591,6 +817,67 @@ async function viewHistory(name){
   $('reportBox').innerHTML=t.includes('<')?t:('<pre>'+esc(t)+'</pre>');
 }
 
+// ============ 设置（API Key 本地管理） ============
+async function loadKeyStatus(){
+  try{
+    const d = await (await fetch('/api/settings/key')).json();
+    const s = d.status || {};
+    $('keyStatus').innerHTML = s.has_key
+      ? `✅ 当前已配置：<code style="background:#F0F2F5;padding:1px 6px;border-radius:4px;">${esc(s.masked)}</code>（来源：${s.source==='env'?'环境变量（优先于本地文件）':'本地配置文件 config/keys.json'}）`
+      : '⚠️ 尚未配置 Key —— AI 增强将自动回退为规则引擎文案';
+  }catch(e){ $('keyStatus').textContent='获取 Key 状态失败：'+e.message; }
+}
+async function saveApiKey(){
+  const v = $('apiKeyInput').value.trim();
+  if(!v){ alert('请输入 API Key'); return; }
+  $('keyMsg').className=''; $('keyMsg').textContent='保存中...';
+  const res = await fetch('/api/settings/key',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({api_key:v})});
+  const d = await res.json();
+  if(!res.ok){ $('keyMsg').className='msg err'; $('keyMsg').textContent=d.detail||'保存失败'; return; }
+  $('apiKeyInput').value='';
+  $('keyMsg').className='msg ok'; $('keyMsg').textContent=d.note||'已保存';
+  loadKeyStatus();
+}
+async function clearApiKey(){
+  if(!confirm('确定清除本地保存的 API Key？')) return;
+  const d = await (await fetch('/api/settings/key/delete',{method:'POST'})).json();
+  $('keyMsg').className='msg ok'; $('keyMsg').textContent=d.note||'已清除';
+  loadKeyStatus();
+}
+async function testApiKey(){
+  const v = $('apiKeyInput').value.trim();
+  $('keyMsg').className=''; $('keyMsg').textContent='测试中（可能需要几秒）...';
+  const res = await fetch('/api/settings/key/test',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({api_key:v||null})});
+  const d = await res.json();
+  $('keyMsg').className = d.ok?'msg ok':'msg err';
+  $('keyMsg').textContent = d.ok?('✅ 连接成功：'+esc(d.reply)):('❌ 连接失败：'+esc(d.error||'未知错误'));
+}
+
+// ============ AI Token 用量 ============
+const SITE_LABELS = {report:'周报综述', enrich:'文本提炼', template:'模板解析', ai:'其它'};
+async function loadTokenUsage(){
+  const d = await (await fetch('/api/settings/tokens')).json();
+  const cost = (d.total_in/1e6*1 + d.total_out/1e6*2).toFixed(4);   // DeepSeek 约 ¥1/百万输入、¥2/百万输出
+  $('tokenKpis').innerHTML = [
+    ['调用次数', d.calls],
+    ['输入 tokens', d.total_in],
+    ['输出 tokens', d.total_out],
+    ['缓存命中', d.cache_hits],
+    ['估算费用', '¥'+cost],
+  ].map(k=>`<div class="kpi"><div class="v" style="font-size:17px">${k[1]}</div><div class="l">${k[0]}</div></div>`).join('');
+  $('tokenEntries').innerHTML = d.entries && d.entries.length ? d.entries.map(e=>
+    `<div style="display:flex;justify-content:space-between;font-size:12px;padding:5px 0;border-bottom:1px solid var(--border);">
+      <span>${e.ts} · ${SITE_LABELS[e.site]||e.site} ${e.cached?'· <span style="color:var(--success)">缓存命中</span>':''}</span>
+      <span style="color:var(--muted)">${e.cached?'0':e.tokens_in} → ${e.cached?'0':e.tokens_out} tok</span>
+    </div>`).join('') : '<div style="font-size:12px;color:var(--muted)">暂无记录（AI 未调用过，或尚未配置 Key）</div>';
+}
+async function clearTokenUsage(){
+  if(!confirm('确定清空 Token 用量统计？')) return;
+  await fetch('/api/settings/tokens/clear',{method:'POST'});
+  $('tokenMsg').textContent='已清空';
+  loadTokenUsage();
+}
+
 // ============ 初始化 ============
 document.querySelectorAll('.tab').forEach(t=>t.addEventListener('click',()=>{
   document.querySelectorAll('.tab').forEach(x=>x.classList.remove('active'));
@@ -599,8 +886,9 @@ document.querySelectorAll('.tab').forEach(t=>t.addEventListener('click',()=>{
   if(t.dataset.tab==='report') loadHistory();
   if(t.dataset.tab==='rules') loadRules();
   if(t.dataset.tab==='template') loadTemplate();
+  if(t.dataset.tab==='settings'){ loadKeyStatus(); loadTokenUsage(); }
 }));
-loadRules(); loadTemplate();
+loadRules(); loadTemplate(); loadKeyStatus(); loadTokenUsage();
 </script>
 </body>
 </html>
