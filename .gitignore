@@ -1,0 +1,25 @@
+# 配置密钥（绝不能提交）
+config/keys.json
+
+# 用户自定义规则
+config/rules.json
+config/rules_history.json
+
+# 运行期状态
+history/
+tmp_uploads/
+*.log
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+
+# 系统/编辑器
+.DS_Store
+.idea/
+.vscode/
+
+# 输出
+examples/output/
