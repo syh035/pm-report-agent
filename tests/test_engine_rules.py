@@ -144,6 +144,19 @@ def test_weighted_completion():
     print("✅ 任务权重完成率")
 
 
+def test_manual_critical_mark():
+    """关键任务改为人工标注：勾选 critical 才标 is_critical；不再自动计算 critical_path。"""
+    p = Project(tasks=[Task(name="A", critical=True), Task(name="B", critical=False)])
+    s = analyze(p, today=TODAY)
+    crit = {ts.task.name for ts in s.task_stats if ts.is_critical}
+    assert crit == {"A"}, crit
+    d = s.to_dict()
+    assert "critical_path" not in d, "已移除自动关键路径字段"
+    assert d["tasks"][0]["is_critical"] is True
+    assert d["tasks"][1]["is_critical"] is False
+    print("✅ 人工关键标注（不再自动计算）")
+
+
 if __name__ == "__main__":
     test_not_started_warning()
     test_explicit_delayed_status()
@@ -158,4 +171,5 @@ if __name__ == "__main__":
     test_status_norm_exposed()
     test_no_progress_no_status_defaults_to_not_started()
     test_weighted_completion()
+    test_manual_critical_mark()
     print("\n全部通过 ✅")

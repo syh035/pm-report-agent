@@ -77,6 +77,9 @@
   /* 表格固定表头 + 限高滚动 */
   .view-table-wrap{max-height:480px;overflow:auto;}
   .view-table-wrap th{position:sticky;top:0;z-index:1;}
+  .move-opt{padding:6px 10px;font-size:13px;cursor:pointer;border-radius:4px;}
+  .move-opt:hover{background:#EEF2FF;} .move-opt.sel{color:var(--primary);font-weight:600;}
+  .risk-item{border-left:3px solid;padding:6px 10px;margin-bottom:6px;font-size:13px;background:var(--card);border-radius:4px;}
   /* 打印友好：只输出当前周报 */
   @media print{
     .topbar,.sidebar,.tabs,.btn,.dropzone,.filters,#onboard,#exportRow,#healthBox,#taskEditBox{display:none !important;}
@@ -107,7 +110,7 @@
     <div class="side-title">工作区</div>
     <div id="workspaceTree"></div>
     <button class="side-btn" onclick="createGroup()">＋ 新建分组</button>
-    <div class="side-btn" onclick="openUpload()" style="border-style:solid">↑ 从文件导入</div>
+    <div style="font-size:11px;color:var(--muted);padding:6px 8px;line-height:1.6;">💡 上传资料用右上角按钮；sheet 可拖入分组或点 📁 移入</div>
   </div>
 
   <!-- 主区域 -->
@@ -128,9 +131,11 @@
           <button class="btn btn-outline" onclick="toggleEditTasks()">✏ 编辑任务（校对）</button>
           <button class="btn btn-outline" onclick="exportTasks()">导出明细 CSV</button>
           <span id="healthBadge" style="font-size:12px;color:var(--muted);"></span>
+          <span id="parseReport" style="font-size:12px;color:var(--muted);"></span>
         </div>
         <div id="healthBox" style="display:none;margin-bottom:12px;"></div>
         <div id="taskEditBox" style="display:none;margin-bottom:12px;"></div>
+        <div id="groupExtra"></div>
         <div class="kpi-grid" id="viewKpis"></div>
         <div class="filters" id="viewFilters"></div>
         <div class="view-table-wrap" id="viewTable"></div>
@@ -151,6 +156,9 @@
         <div class="row" style="margin-top:16px;">
           <button class="btn btn-primary" onclick="saveRules()">保存规则</button>
           <button class="btn btn-outline" onclick="loadRules()">重新载入</button>
+          <button class="btn btn-outline" onclick="exportRules()">导出规则</button>
+          <button class="btn btn-outline" onclick="$('rulesImportInput').click()">导入规则</button>
+          <input type="file" id="rulesImportInput" accept=".json" style="display:none" onchange="importRules(this)">
           <button class="btn btn-danger" onclick="resetRules()">恢复默认（清理旧规则）</button>
           <button class="btn btn-outline" onclick="toggleHistory()">查看规则历史</button>
         </div>
@@ -252,6 +260,26 @@
         </ul>
       </div>
       <div class="card">
+        <h2>AI 模型与接口（仅保存本地）</h2>
+        <p style="font-size:12px;color:var(--muted);margin-bottom:12px;">
+          选择生成周报/提炼文本使用的模型与 API 地址。配置只写入本机 config/keys.json，不会上传。
+        </p>
+        <div class="field">
+          <label>模型</label>
+          <select id="aiModelSelect" style="width:100%;padding:8px 10px;border:1px solid var(--border);border-radius:6px;"></select>
+          <div class="hint" style="margin-top:4px;">deepseek-chat 通用性价比高；deepseek-reasoner 推理增强、更贵更慢、综述更深刻</div>
+        </div>
+        <div class="field">
+          <label>API 地址（Base URL，兼容 OpenAI 格式；留空用官方地址）</label>
+          <input type="text" id="aiBaseUrl" placeholder="https://api.deepseek.com" style="width:100%">
+        </div>
+        <div class="row">
+          <button class="btn btn-primary" onclick="saveAiConfig()">保存配置</button>
+          <button class="btn btn-outline" onclick="loadAiConfig()">重新载入</button>
+          <span id="aiCfgMsg" style="font-size:12px;color:var(--muted)"></span>
+        </div>
+      </div>
+      <div class="card">
         <h2>AI Token 用量（省钱看这里）</h2>
         <p style="font-size:12px;color:var(--muted);margin-bottom:12px;">
           所有 AI 结果都有本地缓存：相同数据不会重复付费。以下统计来自本机记录（约 ¥0.001/千输入 token、¥0.002/千输出 token 估算）。
@@ -269,6 +297,8 @@
   </div>
 </div>
 
+<div id="moveMenu" style="display:none;position:fixed;background:var(--card);border:1px solid var(--border);border-radius:6px;box-shadow:0 4px 14px rgba(0,0,0,.15);z-index:99;min-width:170px;padding:5px;"></div>
+<div id="phModal" style="display:none;position:fixed;right:16px;top:70px;width:340px;max-height:70vh;overflow-y:auto;background:var(--card);border:1px solid var(--border);border-radius:8px;box-shadow:0 6px 20px rgba(0,0,0,.2);z-index:98;padding:12px;"></div>
 <input type="file" id="uploadInput" multiple style="display:none" accept=".xlsx,.xlsm,.csv,.docx,.pdf">
 <script>
 const $ = id => document.getElementById(id);
@@ -304,26 +334,66 @@ async function loadWorkspace(){
   const res = await fetch('/api/workspace'); const d = await res.json();
   state.sheet = d.sheets; state.groups = d.groups;
   let html = '';
-  // 分组
+  // 分组（头显示成员数；可拖入 sheet）
   for(const gid in state.groups){
     const g = state.groups[gid];
-    html += `<div><div class="group-head" onclick="selectGroup('${gid}')">📁 ${esc(g.name||'分组')}
-      <span class="ghost" style="margin-left:auto" onclick="event.stopPropagation();delGroup('${gid}')">🗑</span></div><div class="child">`;
+    const empty = !g.sheets.length ? '<div style="font-size:11px;color:var(--muted);padding:2px 8px 6px 22px;">（空，拖入或点 sheet 的 📁 移入）</div>' : '';
+    html += `<div><div class="group-head" onclick="selectGroup('${gid}')"
+        ondragover="event.preventDefault();this.style.background='#E3E9FF'"
+        ondragleave="this.style.background=''"
+        ondrop="event.preventDefault();this.style.background='';sheetDrop(event,'${gid}')">📁 ${esc(g.name||'分组')} <span style="font-size:11px;opacity:.7">(${g.sheets.length})</span>
+      <span class="ghost" style="margin-left:auto" onclick="event.stopPropagation();delGroup('${gid}')">🗑</span></div><div class="child">${empty}`;
     g.sheets.forEach(sid=>{ html += itemHtml(sid, state.sheet[sid]); });
     html += `</div></div>`;
   }
-  // 未分组的 sheet
+  // 待分组文件夹：上传的新数据先落在这里，拖入分组或点 📁 移入
   const grouped = new Set(Object.values(state.groups).flatMap(g=>g.sheets));
-  for(const sid in state.sheet){
-    if(!grouped.has(sid)) html += itemHtml(sid, state.sheet[sid]);
+  const pending = Object.keys(state.sheet).filter(sid=>!grouped.has(sid));
+  if(pending.length){
+    html += `<div><div class="group-head" style="color:var(--muted)"
+        ondragover="event.preventDefault()" >📥 待分组 <span style="font-size:11px;opacity:.7">(${pending.length})</span></div><div class="child">`;
+    pending.forEach(sid=>{ html += itemHtml(sid, state.sheet[sid]); });
+    html += `</div></div>`;
   }
   $('workspaceTree').innerHTML = html || '<div style="font-size:12px;color:var(--muted);padding:8px">（空，请上传资料）</div>';
 }
 function itemHtml(sid, sh){
   if(!sh) return '';
-  return `<div class="tree-item ${state.current===sid?'active':''}" onclick="selectSheet('${sid}')">🧾 ${esc(sh.name)}
+  return `<div class="tree-item ${state.current===sid?'active':''}" onclick="selectSheet('${sid}')"
+      draggable="true" ondragstart="sheetDrag(event,'${sid}')">🧾 ${esc(sh.name)}
+    <span class="ghost" onclick="event.stopPropagation();showMoveMenu('${sid}',event)" title="移入/移出分组">📁</span>
     <span class="ghost" onclick="event.stopPropagation();renameSheet('${sid}')">✏</span>
     <span class="ghost" onclick="event.stopPropagation();delSheet('${sid}')">🗑</span></div>`;
+}
+// —— 移入/移出分组（下拉菜单 + 拖拽） ——
+function sheetDrag(ev, sid){ ev.dataTransfer.setData('text/sheet-id', sid); }
+function sheetDrop(ev, gid){
+  const sid = ev.dataTransfer.getData('text/sheet-id');
+  if(sid) moveToGroup(sid, gid);
+}
+function showMoveMenu(sid, ev){
+  ev.stopPropagation();
+  const groups = Object.keys(state.groups||{});
+  const curG = Object.keys(state.groups||{}).find(gid => (state.groups[gid].sheets||[]).includes(sid)) || '';
+  let html = groups.map(gid=>`<div class="move-opt ${gid===curG?'sel':''}" onclick="moveToGroup('${sid}','${gid}')">📁 ${esc(state.groups[gid].name)}${gid===curG?' ✓':''}</div>`).join('');
+  if(curG) html += `<div class="move-opt" onclick="moveToGroup('${sid}','')">🚫 移出分组</div>`;
+  const m = $('moveMenu');
+  m.innerHTML = html || '<div style="font-size:12px;color:var(--muted);padding:6px 10px">（暂无分组，先点「＋ 新建分组」）</div>';
+  m.style.display='block';
+  const r = ev.currentTarget.getBoundingClientRect();
+  m.style.left = Math.max(4, Math.min(r.right+4, window.innerWidth-190))+'px';
+  m.style.top = (r.bottom+4)+'px';
+}
+async function moveToGroup(sid, gid){
+  $('moveMenu').style.display='none';
+  if(gid){
+    await fetch('/api/workspace/groups/'+gid+'/sheet',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({sheet_id:sid})});
+  }else{
+    await fetch('/api/workspace/sheet/'+sid+'/ungroup',{method:'POST'});
+  }
+  loadWorkspace();
+  // 若当前正显示该分组/被移动 sheet 的视图，刷新
+  renderTableForCurrent();
 }
 async function selectSheet(sid){
   state.current = 'sheet:'+sid; $('emptyHint').style.display='none'; $('currentView').style.display='block';
@@ -347,8 +417,10 @@ async function delGroup(gid){ if(!confirm('删除分组？（其中的 sheet 不
 // ============ 数据表格渲染（含排序筛选颜色） ============
 function renderSheetView(sh){
   $('viewTitle').textContent = '📊 ' + (sh.name||'sheet') + ' — 单项数据';
+  $('groupExtra').innerHTML='';
   renderKpisFromTasks(sh.stats);
   renderHealth(sh.stats?.health);
+  renderParseReport(sh.parse_stats);
   if(!state.editMode){
     $('taskEditBox').style.display='none';
     const tasks = (sh.stats?.tasks||[]).map(t=>({...t}));
@@ -357,13 +429,58 @@ function renderSheetView(sh){
     renderEditTable(sh.tasks_full||[]);
   }
 }
+function renderParseReport(ps){
+  const box = $('healthBadge').parentNode.querySelector('#parseReport');
+  if(!box) return;
+  if(!ps || !ps.rule_hits){
+    box.style.display='none'; return;
+  }
+  box.style.display='inline';
+  const parts = [`解析：任务 ${ps.rule_hits} 条`];
+  if(ps.ignored) parts.push(`已忽略干扰 ${ps.ignored} 条`);
+  if(ps.ambiguous) parts.push(`模糊行 ${ps.ambiguous} 条${ps.ai_used?'（AI 兜底）':''}`);
+  box.textContent = '📋 ' + parts.join('｜');
+}
 function renderGroupView(g){
-  $('viewTitle').textContent = '📁 ' + (g.name||'分组') + ' — 分组汇总';
+  $('viewTitle').textContent = '📁 ' + (g.name||'分组') + ' — 分组总览';
   const s = g.summary;
-  $('viewKpis').innerHTML = s ? kpiHtml(s.total,'总任务',s.completion_rate+'%','完成率',s.avg_progress+'%','平均实际',s.risk,'风险项') : '<div>无数据</div>';
-  renderHealth(s ? s.health : null);
+  if(!s){
+    $('viewKpis').innerHTML = '<div>空分组：用 sheet 上的 📁 或拖拽把它移入后显示汇总</div>';
+    renderHealth(null); renderParseReport(null); $('groupExtra').innerHTML=''; $('viewFilters').innerHTML=''; $('viewTable').innerHTML='';
+    return;
+  }
+  $('viewKpis').innerHTML = kpiHtml(s.total,'总任务',s.completion_rate+'%','完成率',s.avg_progress+'%','平均实际',s.risk,'风险项')
+    + (s.avg_target_progress!=null?`<div class="kpi"><div class="v">${s.avg_target_progress}%</div><div class="l">平均目标</div></div>`:'')
+    + (s.delayed!=null?`<div class="kpi"><div class="v">${s.delayed}</div><div class="l">滞后</div></div>`:'');
+  renderHealth(s.health);
+  renderParseReport(null);
+  // 分组总览：风险提示区 / 关键路径 / sheet 成员清单
+  const tasks = s.tasks||[];
+  const risks = tasks.filter(t=>t.risk_level && t.risk_level!=='正常');
+  const seen = {}; const riskList = risks.filter(t=>{ if(seen[t.name]) return false; seen[t.name]=1; return true; });
+  let extra = '';
+  if(riskList.length){
+    extra += `<div class="card" style="margin-top:12px;"><h2>🔴 风险与需关注（${riskList.length}）</h2>` + riskList.slice(0,15).map(t=>{
+      const c = t.risk_level==='风险' ? riskColor('风险') : riskColor('关注');
+      return `<div class="risk-item" style="border-left-color:${c}"><span class="pill" style="background:${c}">${t.risk_level}</span> <b>${esc(t.name)}</b> ${t.risk_reason?`<span style="color:var(--muted)">：${esc(t.risk_reason)}</span>`:''}</div>`;
+    }).join('') + `</div>`;
+  }
+  if(s.critical_path && s.critical_path.length){
+    extra += `<div class="card" style="margin-top:12px;"><h2>🔑 关键路径（${s.critical_path.length}）</h2><div style="font-size:13px;line-height:1.8;">${s.critical_path.map(esc).join(' → ')}</div></div>`;
+  }
+  const criticalTasks = tasks.filter(t=>t.is_critical);
+  if(criticalTasks.length){
+    extra += `<div class="card" style="margin-top:12px;"><h2>🔑 人工标注关键任务（${criticalTasks.length}）</h2><div style="font-size:13px;line-height:1.8;">${criticalTasks.map(t=>esc(t.name)).join('、')}</div></div>`;
+  }
+  const members = (g.sheets||[]).map(sid=>{
+    const sh = state.sheet[sid]; if(!sh) return '';
+    const st = sh.stats||{};
+    return `<div class="tree-item" style="margin:2px 0" onclick="selectSheet('${sid}')">🧾 ${esc(sh.name)}
+      <span style="margin-left:auto;font-size:12px;color:var(--muted)">${st.total||0} 任务 · 完成率 ${st.completion_rate!=null?st.completion_rate+'%':'-'}</span></div>`;
+  }).join('');
+  extra += `<div class="card" style="margin-top:12px;"><h2>📁 成员 sheet（${(g.sheets||[]).length}）</h2>${members||'<div style="font-size:12px;color:var(--muted)">（空）</div>'}</div>`;
+  $('groupExtra').innerHTML = extra;
   $('taskEditBox').style.display='none';
-  const tasks = s ? s.tasks||[] : [];
   renderTable(tasks, g.name);
 }
 function renderHealth(h){
@@ -396,36 +513,57 @@ function toggleEditTasks(){
   state.editMode = !state.editMode;
   if(state.editMode){
     $('viewTable').innerHTML=''; $('viewFilters').innerHTML='';
-    renderEditTable((state.sheet[sid].tasks_full)||[]);
+    renderEditTable((state.sheet[sid].tasks_full)||[], (state.sheet[sid].rule_tasks)||[]);
   } else {
     renderTableForCurrent();
   }
 }
-function renderEditTable(tasks){
+function renderEditTable(tasks, ruleTasks){
   const box = $('taskEditBox');
   state.editTasks = (tasks||[]).map(t=>({
     name:t.name||'', owner:t.owner||'', progress:t.progress, status:t.status||'',
     plan_start:t.plan_start||'', plan_end:t.plan_end||'', actual_end:t.actual_end||'',
-    depends_on:t.depends_on||'', slow_ok:!!t.slow_ok, note:t.note||'', weight:t.weight!=null?t.weight:1
+    depends_on:t.depends_on||'', slow_ok:!!t.slow_ok, critical:!!t.critical, note:t.note||'', weight:t.weight!=null?t.weight:1
   }));
+  state.ruleTasks = ruleTasks||[];
+  // 计算 AI 与规则不一致的行（供 diff 标注）
+  const ruleByName = {};
+  (state.ruleTasks||[]).forEach(r=>{ ruleByName[r.name]=r; });
+  state.aiDiffIdx = {};
+  state.editTasks.forEach((t,i)=>{
+    const r = ruleByName[t.name];
+    if(r && (String(r.progress??'')!==String(t.progress??'') || (r.owner||'')!==(t.owner||'') || (r.status||'')!==(t.status||''))){
+      state.aiDiffIdx[i] = {rule:{progress:r.progress, owner:r.owner, status:r.status}};
+    }
+  });
   box.style.display='block';
   box.className='card';
-  box.innerHTML = `<div style="font-size:13px;font-weight:600;margin-bottom:8px;">任务校对（改完点「保存修改」，统计会自动重算；「偏慢豁免」勾选后该任务进度偏慢不再标红；「权重」影响完成率）</div>
+  const nDiff = Object.keys(state.aiDiffIdx).length;
+  box.innerHTML = `<div style="font-size:13px;font-weight:600;margin-bottom:8px;">任务校对（改完点「保存修改」；「偏慢豁免」=进度偏慢不标红；「关键」=人工标注关键路径任务；「权重」影响完成率）${nDiff?` <span style="color:var(--primary);font-weight:500">— ${nDiff} 处 AI 与规则解析不一致（行首标 AI）</span>`:''}</div>
     <div style="overflow-x:auto;"><table id="editTaskTable">
-      <tr><th>任务名称</th><th>负责人</th><th>进度%</th><th>状态</th><th>计划开始</th><th>计划完成</th><th>依赖任务</th><th>权重</th><th>偏慢豁免</th><th>备注</th><th></th></tr>
+      <tr><th>任务名称</th><th>负责人</th><th>进度%</th><th>状态</th><th>计划开始</th><th>计划完成</th><th>依赖任务（选）</th><th>关键</th><th>权重</th><th>偏慢豁免</th><th>备注</th><th></th></tr>
     </table></div>
     <div class="row" style="margin-top:10px;">
       <button class="btn btn-primary" onclick="saveTasks()">保存修改</button>
       <button class="btn btn-outline" onclick="addTaskRow()">＋ 添加任务</button>
+      ${(state.ruleTasks||[]).length?`<button class="btn btn-outline" onclick="revertToRule()">↩ 还原为规则解析结果</button>`:''}
       <button class="btn btn-danger" onclick="toggleEditTasks()">取消</button>
       <span id="editMsg" style="font-size:12px;color:var(--muted)"></span>
     </div>`;
   const tb = $('editTaskTable');
   state.editTasks.forEach((t,i)=>{ tb.insertAdjacentHTML('beforeend', editRowHtml(t,i)); });
 }
+function revertToRule(){
+  if(!(state.ruleTasks||[]).length){ alert('无规则解析快照（未使用 AI 提炼）'); return; }
+  if(!confirm('用规则解析结果替换当前编辑内容？（AI 建议将被放弃）')) return;
+  renderEditTable(state.ruleTasks, state.ruleTasks);
+  $('editMsg').textContent='已还原为规则解析结果';
+}
 function editRowHtml(t,i){
+  const diff = state.aiDiffIdx && state.aiDiffIdx[i];
+  const badge = diff ? `<span style="background:var(--primary);color:#fff;font-size:10px;border-radius:8px;padding:1px 6px;cursor:help;" title="AI 提炼与规则解析不一致｜规则值：进度=${diff.rule.progress} 负责人=${diff.rule.owner} 状态=${diff.rule.status}">AI改</span> ` : '';
   return `<tr>
-    <td><input style="width:140px" value="${esc(t.name)}" onchange="updTask(${i},'name',this.value)"></td>
+    <td>${badge}<input style="width:130px" value="${esc(t.name)}" onchange="updTask(${i},'name',this.value)"></td>
     <td><input style="width:90px" value="${esc(t.owner)}" onchange="updTask(${i},'owner',this.value)"></td>
     <td><input type="number" min="0" max="150" style="width:70px" value="${t.progress==null?'':t.progress}" onchange="updTask(${i},'progress',this.value)"></td>
     <td><select onchange="updTask(${i},'status',this.value)">
@@ -433,16 +571,33 @@ function editRowHtml(t,i){
     </select></td>
     <td><input type="date" value="${esc(t.plan_start||'')}" onchange="updTask(${i},'plan_start',this.value)"></td>
     <td><input type="date" value="${esc(t.plan_end||'')}" onchange="updTask(${i},'plan_end',this.value)"></td>
-    <td><input style="width:110px" placeholder="依赖的任务名" value="${esc(t.depends_on)}" onchange="updTask(${i},'depends_on',this.value)"></td>
+    <td><select style="width:130px" onchange="updTask(${i},'depends_on',this.value)" title="按 分组/项目 → 任务 选择">${depOptionsHtml(t.depends_on)}</select></td>
+    <td style="text-align:center"><input type="checkbox" ${t.critical?'checked':''} onchange="updTask(${i},'critical',this.checked)" title="人工标注：该任务是否关键路径任务（🔑）"></td>
     <td><input type="number" min="0.1" step="0.5" style="width:60px" value="${t.weight}" onchange="updTask(${i},'weight',this.value)" title="影响完成率/平均进度"></td>
     <td style="text-align:center"><input type="checkbox" ${t.slow_ok?'checked':''} onchange="updTask(${i},'slow_ok',this.checked)" title="勾选后该任务进度偏慢不再标红"></td>
     <td><input style="width:120px" value="${esc(t.note)}" onchange="updTask(${i},'note',this.value)"></td>
     <td><button class="btn btn-danger btn-sm" style="font-size:11px;padding:2px 8px" onclick="delTaskRow(${i})">✕</button></td>
   </tr>`;
 }
+// 依赖任务三级选项：分组/待分组 → 项目(sheet) → 任务名
+function depOptionsHtml(cur){
+  const groups = state.groups||{};
+  const grouped = new Set(Object.values(groups).flatMap(g=>g.sheets||[]));
+  let html = '<option value="">（无依赖）</option>';
+  const pushSheet = (sid, prefix)=>{
+    const sh = state.sheet[sid]; if(!sh) return;
+    const names = (sh.tasks_full||[]).map(x=>x.name).filter(Boolean);
+    if(!names.length) return;
+    html += `<optgroup label="${prefix} → ${esc(sh.name)}">` +
+      names.map(n=>`<option value="${esc(n)}" ${cur===n?'selected':''}>${esc(n)}</option>`).join('') + '</optgroup>';
+  };
+  for(const gid in groups){ const g = groups[gid]; (g.sheets||[]).forEach(sid=>pushSheet(sid, '📁 '+g.name)); }
+  Object.keys(state.sheet).filter(sid=>!grouped.has(sid)).forEach(sid=>pushSheet(sid, '📥 待分组'));
+  return html;
+}
 function updTask(i,key,val){ state.editTasks[i][key]=val; }
 function addTaskRow(){
-  state.editTasks.push({name:'',owner:'',progress:null,status:'',plan_start:'',plan_end:'',actual_end:'',depends_on:'',slow_ok:false,note:'',weight:1});
+  state.editTasks.push({name:'',owner:'',progress:null,status:'',plan_start:'',plan_end:'',actual_end:'',depends_on:'',slow_ok:false,critical:false,note:'',weight:1});
   const tb = $('editTaskTable');
   tb.insertAdjacentHTML('beforeend', editRowHtml(state.editTasks[state.editTasks.length-1], state.editTasks.length-1));
 }
@@ -552,7 +707,7 @@ function renderTable(tasks, name){
     <input placeholder="负责人筛选" value="${esc(f.owner)}" onchange="setFilter('${name}','owner',this.value)">
     <button class="btn btn-outline" style="font-size:12px;padding:4px 10px" onclick="resetFilters('${name}')">重置</button>
     <span style="font-size:12px;color:var(--muted)">共 ${rows.length} 条${rows.length>PAGE_SIZE?`，第 ${pg.page+1}/${pages} 页` : ''}</span>
-    <span style="font-size:12px;color:var(--muted)">图例：<span class="pill" style="background:${riskColor('风险')}">风险</span> <span class="pill" style="background:${riskColor('关注')}">关注</span> 无色=正常</span>
+    <span style="font-size:12px;color:var(--muted)">图例：<span class="pill" style="background:${riskColor('风险')}">风险</span> <span class="pill" style="background:${riskColor('关注')}">关注</span> 无色=正常，🔑=关键路径</span>
     ${rows.length>PAGE_SIZE?`<button class="btn btn-outline" style="font-size:12px;padding:4px 10px" onclick="pageTable('${name}',${pg.page-1})" ${pg.page===0?'disabled':''}>‹ 上一页</button>
     <button class="btn btn-outline" style="font-size:12px;padding:4px 10px" onclick="pageTable('${name}',${pg.page+1})" ${pg.page>=pages-1?'disabled':''}>下一页 ›</button>`:''}`;
   // 表头（带排序）
@@ -567,7 +722,7 @@ function renderTable(tasks, name){
     const sn = t.status_norm || t.status || '-';
     const tip = esc((t.note||t.risk_reason||''));
     h += `<tr ${rowStyle} title="${tip}"><td>${pg.page*PAGE_SIZE+i+1}</td>
-      <td>${esc(t.name)}</td><td>${esc(t.owner)}</td>
+      <td>${t.is_critical?'<span title="关键路径任务">🔑</span> ':''}${esc(t.name)}</td><td>${esc(t.owner)}</td>
       <td>${t.progress!=null?t.progress+'%':'-'}</td>
       <td>${t.target_progress!=null?'<b>'+t.target_progress+'%</b>':'-'}</td>
       <td>${esc(sn)}</td>
@@ -655,6 +810,25 @@ async function resetRules(){
   await fetch('/api/rules/reset',{method:'POST'}); loadRules(); refreshRules();
   $('rulesMsg').className='msg ok'; $('rulesMsg').textContent='已恢复默认';
 }
+async function exportRules(){
+  const res = await fetch('/api/rules/export');
+  const blob = await res.blob();
+  const a = document.createElement('a'); const url = URL.createObjectURL(blob);
+  a.href=url; a.download='规则库导出.json'; a.click(); URL.revokeObjectURL(url);
+}
+async function importRules(input){
+  const f = input.files && input.files[0];
+  if(!f) return;
+  const txt = await f.text();
+  let rules;
+  try{ rules = JSON.parse(txt); }catch(e){ alert('文件不是有效的 JSON'); input.value=''; return; }
+  const res = await fetch('/api/rules/import',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({rules})});
+  const d = await res.json();
+  $('rulesMsg').className = res.ok?'msg ok':'msg err';
+  $('rulesMsg').textContent = d.note || (d.detail||'导入失败');
+  input.value='';
+  loadRules(); refreshRules();
+}
 async function toggleHistory(){
   const box=$('rulesHistory'); box.style.display=box.style.display==='none'?'block':'none';
   if(box.style.display==='block'){
@@ -670,6 +844,7 @@ let tplBlocks = [];           // 当前画布 blocks
 let tplModules = [];          // 模块库
 let tplKpiOptions = [];       // KPI 可选字段
 let tplPresets = {};          // 预置模板
+let tplPhDocs = {};           // 占位符说明（引用路径/计算方式，右键可查）
 let tplSet = state;           // 共享 state
 
 const MODULE_DEFAULTS = {
@@ -682,6 +857,10 @@ const MODULE_DEFAULTS = {
   'status':  {},
   'risk_list':{},
   'plan':    {},
+  'delta':   {},
+  'transition': {},
+  'project_table': {projects:''},
+  'project_sections': {projects:''},
   'custom':  {content:'自定义内容', is_html:false},
 };
 
@@ -690,6 +869,7 @@ async function loadTemplate(){
   tplModules = d.modules || [];
   tplKpiOptions = d.kpi_options || [];
   tplPresets = d.presets || {};
+  tplPhDocs = d.placeholder_docs || {};
   // 填充预置模板下拉
   $('presetSelect').innerHTML = Object.keys(tplPresets).map(k=>
     `<option value="${k}">${tplPresets[k].label}${tplPresets[k].desc?' — '+tplPresets[k].desc:''}</option>`).join('');
@@ -788,26 +968,48 @@ function blockHtml(b,i){
 function tplDrag(ev, i){ ev.dataTransfer.setData('text/block-from', String(i)); }
 
 function blockEditorHtml(b,i){
+  const phBtn = `<button class="btn btn-outline btn-sm" style="font-size:11px;padding:2px 8px;margin-left:6px" onclick="showPhDocs(${i})" title="查看占位符引用路径/计算方式（也可在输入框右键）">💡占位符</button>`;
   switch(b.type){
     case 'title':
     case 'heading':
-      return `<div class="field"><label>标题</label><input type="text" value="${esc(b.title||'')}" onchange="updBlock(${i},'title',this.value)"></div>`;
+      return `<div class="field"><label>标题${phBtn}</label><input type="text" style="width:100%" value="${esc(b.title||'')}" onchange="updBlock(${i},'title',this.value)" oncontextmenu="event.preventDefault();showPhDocs(${i})"></div>`;
     case 'meta':
-      return `<div class="field"><label>格式（含{period}{today}占位）</label><input type="text" value="${esc(b.format||'周期：{period}')}" onchange="updBlock(${i},'format',this.value)"></div>`;
+      return `<div class="field"><label>格式（含{period}{today}占位）${phBtn}</label><input type="text" style="width:100%" value="${esc(b.format||'周期：{period}')}" onchange="updBlock(${i},'format',this.value)" oncontextmenu="event.preventDefault();showPhDocs(${i})"></div>`;
     case 'overview':
       return `<div class="field"><label>显示内容</label><select onchange="updBlock(${i},'placeholder',this.value)">
         <option value="overview" ${b.placeholder!=='next_plan'?'selected':''}>进展综述</option>
         <option value="next_plan" ${b.placeholder==='next_plan'?'selected':''}>下周计划</option></select></div>`;
     case 'kpi':
-      return `<div class="field"><label>KPI 字段（勾选显示）</label><div style="display:flex;flex-wrap:wrap;gap:6px;">
+      return `<div class="field"><label>KPI 字段（勾选显示，自动附绝对值）</label><div style="display:flex;flex-wrap:wrap;gap:6px;">
         ${tplKpiOptions.map(o=>`<label style="font-size:12px;display:flex;gap:3px;align-items:center">
           <input type="checkbox" ${(b.keys||[]).includes(o.key)?'checked':''} onchange="toggKpi(${i},'${o.key}',this.checked)">${o.label}</label>`).join('')}</div></div>`;
+    case 'project_table':
+    case 'project_sections':
+      return `<div class="field"><label>只看部分项目（留空=全部；逗号分隔项目名，如：财务项目,测试项目）</label>
+        <input type="text" style="width:100%" value="${esc(b.projects||'')}" placeholder="全部项目" onchange="updBlock(${i},'projects',this.value)">
+        <div class="hint">渲染时按「数据」页当前选中的项目/分组输出</div></div>`;
     case 'custom':
-      return `<div class="field"><label>内容</label><textarea rows="2" style="width:100%" onchange="updBlock(${i},'content',this.value)">${esc(b.content||'')}</textarea>
+      return `<div class="field"><label>内容${phBtn}</label><textarea rows="3" style="width:100%" onchange="updBlock(${i},'content',this.value)" oncontextmenu="event.preventDefault();showPhDocs(${i})">${esc(b.content||'')}</textarea>
         <label style="font-size:12px;display:flex;gap:3px;align-items:center;margin-top:4px"><input type="checkbox" ${b.is_html?'checked':''} onchange="updBlock(${i},'is_html',this.checked)">作为 HTML</label></div>`;
     default:
-      return `<div style="font-size:12px;color:var(--muted)">数据自动绑定当前统计</div>`;
+      // 数据自动绑定型模块：人工勾选是否用当前统计填充（锚点开关）
+      return `<label style="font-size:12px;display:flex;gap:4px;align-items:center;"><input type="checkbox" ${b.binding!==false?'checked':''} onchange="updBlock(${i},'binding',this.checked)"> 数据绑定（勾选=按当前统计自动填充；取消=输出占位提示）</label>`;
   }
+}
+function showPhDocs(i){
+  const b = tplBlocks[i]; if(!b) return;
+  const m = $('phModal');
+  const rows = Object.keys(tplPhDocs).map(ph=>{
+    const d = tplPhDocs[ph];
+    return `<div style="padding:6px 0;border-bottom:1px solid var(--border);font-size:12px;">
+      <code style="background:#F0F2F5;padding:1px 6px;border-radius:4px;">${ph}</code>
+      <div style="color:var(--muted);margin-top:2px">引用路径：${esc(d.path||'-')}</div>
+      <div style="color:var(--muted)">计算方式：${esc(d.formula||'-')}（${esc(d.type||'')}）</div></div>`;
+  }).join('');
+  m.innerHTML = `<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">
+      <b style="font-size:13px">占位符说明（在文本中写 ${'{完成率}'} 之类即自动填充；想固定数值，把占位符改成数字即可）</b>
+      <button class="btn btn-danger btn-sm" onclick="$('phModal').style.display='none'" style="font-size:11px;padding:2px 8px">关闭</button></div>` + rows;
+  m.style.display='block';
 }
 function updBlock(i,key,val){ tplBlocks[i][key]=val; }
 function toggKpi(i,key,ch){ tplBlocks[i].keys = tplBlocks[i].keys||[]; if(ch){ if(!tplBlocks[i].keys.includes(key)) tplBlocks[i].keys.push(key);} else tplBlocks[i].keys=tplBlocks[i].keys.filter(k=>k!==key); }
@@ -904,6 +1106,7 @@ async function generateReport(){
     if(g1.tokens && (g1.tokens.in + g1.tokens.out + g1.tokens.cache_hits) > 0){
       msg += `；本次 AI 消耗 ${g1.tokens.in} in / ${g1.tokens.out} out tok${g1.tokens.cache_hits?'（缓存命中 '+g1.tokens.cache_hits+'）':''}`;
     }
+    if(g1.ignored) msg += `；已按规则忽略干扰 ${g1.ignored} 条`;
     msg += `（耗时 ${((Date.now()-t0)/1000).toFixed(1)}s）`;
     $('genMsg').className=g1.ai_error?'msg err':'msg ok';
     $('genMsg').textContent=msg;
@@ -929,12 +1132,21 @@ async function saveToHistory(){
 }
 async function loadHistory(){
   const d=await(await fetch('/api/history')).json();
-  $('historyList').innerHTML=d.items.map(it=>
-    `<li><span>📄 ${esc(it.name)} ${it.has_stats?'<span class="pill" style="background:var(--primary);font-size:10px;">↻ 环比</span>':''}</span>
+  const itemHtml = it => `<li><span>📄 ${esc(it.name)} ${it.has_stats?'<span class="pill" style="background:var(--primary);font-size:10px;">↻ 环比</span>':''}</span>
       <span style="display:flex;gap:8px;align-items:center"><span style="font-size:11px;color:var(--muted)">${it.mtime}</span>
       <button class="btn btn-outline btn-sm" onclick="viewHistory('${it.name}')" style="font-size:11px;padding:4px 10px">查看</button>
       <button class="btn btn-outline btn-sm" onclick="renHistory('${it.name}')" style="font-size:11px;padding:4px 8px">重命名</button>
-      <button class="btn btn-danger btn-sm" onclick="delHistory('${it.name}')" style="font-size:11px;padding:4px 8px">删除</button></span></li>`).join('')||'<li style="color:var(--muted)">暂无历史</li>';
+      <button class="btn btn-danger btn-sm" onclick="delHistory('${it.name}')" style="font-size:11px;padding:4px 8px">删除</button></span></li>`;
+  if(!d.items || !d.items.length){ $('historyList').innerHTML='<li style="color:var(--muted)">暂无历史</li>'; loadTrend(); return; }
+  // 按项目分组展示
+  const groups = {};
+  d.items.forEach(it=>{ const g = it.project || '（未分类）'; (groups[g]=groups[g]||[]).push(it); });
+  let html = '';
+  for(const g in groups){
+    html += `<li style="font-size:12px;font-weight:600;color:var(--primary);padding:8px 0 2px;">📁 ${esc(g)}（${groups[g].length}）</li>`;
+    html += groups[g].map(itemHtml).join('');
+  }
+  $('historyList').innerHTML = html;
   loadTrend();
 }
 async function viewHistory(name){
@@ -1047,6 +1259,22 @@ async function clearTokenUsage(){
   loadTokenUsage();
 }
 
+// ============ AI 模型与接口配置 ============
+async function loadAiConfig(){
+  const d = await (await fetch('/api/settings/ai')).json();
+  const cfg = d.config || {};
+  $('aiModelSelect').innerHTML = (d.models||[]).map(m=>
+    `<option value="${m.value}" ${cfg.model===m.value?'selected':''}>${m.label}</option>`).join('');
+  $('aiBaseUrl').value = (cfg.base_url && cfg.base_url!=='https://api.deepseek.com') ? cfg.base_url : '';
+}
+async function saveAiConfig(){
+  const body = {model: $('aiModelSelect').value, base_url: $('aiBaseUrl').value.trim()};
+  $('aiCfgMsg').textContent='保存中...';
+  const res = await fetch('/api/settings/ai',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
+  const d = await res.json();
+  $('aiCfgMsg').textContent = res.ok ? (d.note||'已保存') : (d.detail||'保存失败');
+}
+
 // ============ 深色模式 / 首次引导 ============
 function toggleDark(){
   document.body.classList.toggle('dark');
@@ -1066,11 +1294,15 @@ document.querySelectorAll('.tab').forEach(t=>t.addEventListener('click',()=>{
   if(t.dataset.tab==='report') loadHistory();
   if(t.dataset.tab==='rules') loadRules();
   if(t.dataset.tab==='template') loadTemplate();
-  if(t.dataset.tab==='settings'){ loadKeyStatus(); loadTokenUsage(); }
+  if(t.dataset.tab==='settings'){ loadKeyStatus(); loadTokenUsage(); loadAiConfig(); }
 }));
 if(localStorage.getItem('pm_dark')==='1'){ document.body.classList.add('dark'); $('darkBtn').textContent='☀️'; }
 if(!localStorage.getItem('pm_onboard')){ $('onboard').style.display='block'; }
-loadRules(); loadTemplate(); loadKeyStatus(); loadTokenUsage();
+// 点击页面其它处关闭「移入分组」菜单
+document.addEventListener('click', e=>{
+  if(!e.target.closest('#moveMenu') && !e.target.closest('.tree-item .ghost')) $('moveMenu').style.display='none';
+});
+loadRules(); loadTemplate(); loadKeyStatus(); loadTokenUsage(); loadAiConfig();
 </script>
 </body>
 </html>

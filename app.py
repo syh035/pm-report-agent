@@ -46,7 +46,7 @@ from pmo_report.rules import load_rules
 from pmo_report import rules as rules_mod
 from pmo_report import ai as ai_mod
 from pmo_report.export import html_to_text, html_to_docx_bytes
-from pmo_report.models import Task
+from pmo_report.models import Task, Project
 from pmo_report.parsers._date_util import parse_date
 
 
@@ -113,7 +113,7 @@ def _latest_prev_stats(name: str = "") -> Optional[Dict]:
 
 ALLOWED_EXTS = {".xlsx", ".xlsm", ".csv", ".docx", ".pdf"}
 
-app = FastAPI(title="PM Report Agent", version="0.9.0")
+app = FastAPI(title="PM Report Agent", version="0.11.0")
 
 
 # ================= 工作区状态 =================
@@ -127,45 +127,21 @@ def _next_sid():
 
 
 def _summarize_sheet(sheets: list) -> Dict:
-    """把一组 sheet 的 ProjectStats 合并成汇总（完成率按任务数加权）。"""
-    all_tasks = []
-    total_avg_target = []
-    completion_weighted = []   # (完成率, 任务数)
-    total_risk = 0
+    """把一组 sheet 合并为分组汇总。
+    与全工作区汇总同口径：任务去重（名称+负责人）、完成率/进度按任务数或权重计算，
+    并重新计算 风险/关键路径/健康体检（而非简单累加）。"""
+    all_tasks: List[Task] = []
+    seen_keys = set()
     for sh in sheets:
-        stats = sh.get("_stats")
-        if not stats:
-            continue
-        all_tasks.extend(stats["tasks"])
-        n = stats.get("total", 0)
-        if n > 0:
-            completion_weighted.append((stats["completion_rate"], n))
-        total_risk += stats["risk"]
-        if stats.get("avg_target_progress") is not None:
-            total_avg_target.append(stats["avg_target_progress"])
-    total = len(all_tasks)
-    done = sum(1 for t in all_tasks if (t.get("progress") or 0) >= 100)
-    # 体检汇总：合并各 sheet 的缺失项
-    health = {"total": total, "missing_progress": [], "missing_owner": [],
-              "missing_plan_start": [], "missing_plan_end": [], "over_progress": []}
-    for sh in sheets:
-        h = (sh.get("_stats") or {}).get("health") or {}
-        for k in ("missing_progress", "missing_owner", "missing_plan_start", "missing_plan_end", "over_progress"):
-            health[k].extend(h.get(k) or [])
-    w_sum = sum(w for _, w in completion_weighted)
-    completion_rate = round(sum(r * w for r, w in completion_weighted) / w_sum, 1) if w_sum else 0
-    return {
-        "total": total,
-        "done": done,
-        "in_progress": sum(1 for t in all_tasks if 0 < (t.get("progress") or 0) < 100),
-        "not_started": sum(1 for t in all_tasks if (t.get("progress") or 0) <= 0),
-        "completion_rate": completion_rate,
-        "avg_progress": round(sum(t.get("progress") or 0 for t in all_tasks) / total, 1) if total else 0,
-        "avg_target_progress": round(sum(total_avg_target) / len(total_avg_target), 1) if total_avg_target else None,
-        "risk": total_risk,
-        "tasks": all_tasks,
-        "health": health,
-    }
+        for t in (sh.get("project") or {}).tasks:
+            key = (t.name, t.owner)
+            if key not in seen_keys:
+                seen_keys.add(key)
+                all_tasks.append(t)
+    all_tasks = _dedupe_tasks(all_tasks)
+    merged_proj = Project(name="分组汇总", tasks=all_tasks)
+    stats = analyze(merged_proj, rules=load_rules())
+    return stats.to_dict()
 
 
 def _workspace_view() -> Dict:
@@ -178,6 +154,8 @@ def _workspace_view() -> Dict:
             "source": sh["source"],
             "stats": sh["_stats"],
             "tasks_full": [t.to_dict() for t in sh["project"].tasks],  # 供任务校对编辑
+            "parse_stats": sh.get("parse_stats") or {},                # 解析质量度量
+            "rule_tasks": sh.get("rule_tasks") or [],                  # AI 提炼前的规则快照（diff 视图）
         }
     groups_view = {}
     for gid, g in WORKSPACE["groups"].items():
@@ -304,6 +282,8 @@ async def workspace_load(files: List[UploadFile] = File(...)):
                 "source": uf.filename or "",
                 "project": proj,
                 "_stats": stats.to_dict(),
+                "parse_stats": proj.parse_stats,
+                "rule_tasks": proj.rule_snapshot,
             }
             created.append(sid)
     return {"ok": True, "created": created, "workspace": _workspace_view()}
@@ -357,6 +337,17 @@ def workspace_group_delete(gid: str):
     return {"ok": True, "workspace": _workspace_view()}
 
 
+@app.post("/api/workspace/sheet/{sid}/ungroup")
+def workspace_sheet_ungroup(sid: str):
+    """把 sheet 移出所有分组（回到未分组区）。"""
+    if sid not in WORKSPACE["sheets"]:
+        raise HTTPException(404, "sheet 不存在")
+    for g in WORKSPACE["groups"].values():
+        if sid in g["sheets"]:
+            g["sheets"].remove(sid)
+    return {"ok": True, "workspace": _workspace_view()}
+
+
 @app.post("/api/workspace/sheet/{sid}/tasks")
 def update_sheet_tasks(sid: str, payload: TaskUpdateIn):
     """保存 sheet 的任务校对结果（编辑/增删），并立即重算统计。"""
@@ -372,6 +363,7 @@ def update_sheet_tasks(sid: str, payload: TaskUpdateIn):
             note=str(item.get("note") or "").strip(),
             depends_on=str(item.get("depends_on") or "").strip(),
             slow_ok=bool(item.get("slow_ok")),
+            critical=bool(item.get("critical")),
         )
         t.plan_start = parse_date(item.get("plan_start"))
         t.plan_end = parse_date(item.get("plan_end"))
@@ -478,6 +470,32 @@ def learn_rules(payload: RulesLearnIn):
             "note": f"已学习忽略词 {len(learned['ignore'])} 条、状态词 {len(learned['status'])} 条（本地生效）"}
 
 
+@app.get("/api/rules/export")
+def export_rules():
+    """导出规则库为 JSON 文件（备份/迁移用）。"""
+    rules = rules_mod.load_rules()
+    bio = io.BytesIO(json.dumps(rules, ensure_ascii=False, indent=2).encode("utf-8"))
+    bio.seek(0)
+    return StreamingResponse(bio, media_type="application/json; charset=utf-8",
+                             headers={"Content-Disposition": _content_disposition("规则库导出.json")})
+
+
+class RulesImportIn(BaseModel):
+    rules: Dict
+
+
+@app.post("/api/rules/import")
+def import_rules(payload: RulesImportIn):
+    """导入规则库（合并：导入值覆盖同名键，其余保留）。"""
+    rules = rules_mod.load_rules()
+    for k, v in (payload.rules or {}).items():
+        if k in rules_mod.DEFAULT_RULES and v is not None:
+            rules[k] = v
+    normed = rules_mod.save_rules(rules)
+    _recompute_all()
+    return {"ok": True, "rules": normed, "note": "已导入规则库并重新统计"}
+
+
 @app.get("/api/rules/history")
 def rules_history():
     return {"history": rules_mod.history()}
@@ -532,6 +550,24 @@ def clear_token_usage():
     return {"ok": True, "note": "已清空 Token 用量统计"}
 
 
+class AiConfigIn(BaseModel):
+    model: str = ""
+    base_url: str = ""
+
+
+@app.get("/api/settings/ai")
+def get_ai_config():
+    """当前 AI 模型与接口配置（只回脱敏信息，本地持久化）。"""
+    return {"config": ai_mod.ai_config(), "models": ai_mod.SUPPORTED_MODELS}
+
+
+@app.post("/api/settings/ai")
+def save_ai_config(payload: AiConfigIn):
+    cfg = ai_mod.save_ai_config(payload.model, payload.base_url)
+    return {"ok": True, "config": cfg,
+            "note": "已保存模型与接口配置（仅本地 config/keys.json）"}
+
+
 # ================= 模板 =================
 @app.get("/api/template")
 def get_template():
@@ -549,6 +585,7 @@ def get_template():
             "modules": MODULE_LIBRARY,
             "kpi_options": KPI_OPTIONS,
             "presets": PRESET_TEMPLATES,
+            "placeholder_docs": report_mod.PLACEHOLDER_DOC,
             "html": "",
             "is_custom": True,
         }
@@ -559,6 +596,7 @@ def get_template():
         "modules": MODULE_LIBRARY,
         "kpi_options": KPI_OPTIONS,
         "presets": PRESET_TEMPLATES,
+        "placeholder_docs": report_mod.PLACEHOLDER_DOC,
         "html": custom or report_mod.DEFAULT_TEMPLATE,
         "is_custom": bool(custom),
     }
@@ -689,8 +727,14 @@ async def generate(
                 "n": len(overlap),
             }
     tokens_before = ai_mod.usage_summary()
-    result = gen.render(merged, use_ai=use_ai, rules=rules, prev_stats=prev)
+    # 分项目数据（供「重点项目表/分项目区块」等精细模块）
+    projects_data = [
+        {"name": (sh.get("name") or sh["project"].name or f"项目{i+1}"), "stats": st.to_dict()}
+        for i, (sh, st) in enumerate(zip(sheet_objs, stats_list))
+    ]
+    result = gen.render(merged, use_ai=use_ai, rules=rules, prev_stats=prev, projects_data=projects_data)
     tokens_after = ai_mod.usage_summary()
+    ignored_total = sum((sh.get("parse_stats") or {}).get("ignored", 0) for sh in sheet_objs)
     generated.append({
         "project": merged.project.name,
         "report": result["report_html"],
@@ -703,6 +747,7 @@ async def generate(
         "stats": merged.to_dict(),
         "frame": frame,
         "n_sheets": len(stats_list),
+        "ignored": ignored_total,
         "tokens": {
             "in": tokens_after["total_in"] - tokens_before["total_in"],
             "out": tokens_after["total_out"] - tokens_before["total_out"],
@@ -785,6 +830,7 @@ def list_history():
     if not os.path.isdir(HISTORY_DIR):
         return {"items": []}
     stats_names = _history_stats_names()
+    file_to_project = {e.get("file", ""): e.get("project", "") for e in _load_stats_history()}
     items = []
     for fn in sorted(os.listdir(HISTORY_DIR)):
         if fn.endswith((".md", ".html", ".txt")):
@@ -793,7 +839,8 @@ def list_history():
                 "name": fn,
                 "size": os.path.getsize(full),
                 "mtime": datetime.fromtimestamp(os.path.getmtime(full)).strftime("%Y-%m-%d %H:%M"),
-                "has_stats": fn in stats_names,   # 环比徽标
+                "has_stats": fn in stats_names,          # 环比徽标
+                "project": file_to_project.get(fn, ""),  # 所属项目（供前端分组）
             })
     items.reverse()
     return {"items": items}

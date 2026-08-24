@@ -78,6 +78,7 @@ class TaskStat:
     target_progress: Optional[float] = None  # 目标进度%（线性日期比例，0-100）
     progress_gap: Optional[float] = None    # target - actual（正=实际落后于目标）
     status_norm: str = ""       # 归一化后的标准状态（供筛选/显示统一使用）
+    is_critical: bool = False   # 人工标注：关键任务（任务表勾选「关键」）
 
     def to_dict(self) -> Dict:
         d = {
@@ -130,6 +131,7 @@ class ProjectStats:
                     "status": ts.task.status or "",
                     "status_norm": ts.status_norm or "",
                     "is_late": ts.is_late,
+                    "is_critical": ts.is_critical,
                     "risk_level": ts.risk_level,
                     "risk_reason": ts.risk_reason,
                     "target_progress": round(ts.target_progress, 1) if ts.target_progress is not None else None,
@@ -317,6 +319,9 @@ def analyze(project: Project, today: date | None = None, rules: Dict | None = No
         stats.completion_rate = round(stats.done_count / stats.total_tasks * 100, 1)
     # 依赖风险传递（先于风险统计执行，使传递来的「关注」计入风险数）
     _apply_dependencies(stats)
+    # 关键任务：人工标注（任务表勾选「关键」），不再自动计算
+    for ts in stats.task_stats:
+        ts.is_critical = bool(ts.task.critical)
     # 风险任务数（level != 正常）
     stats.risk_count = sum(1 for ts in stats.task_stats if ts.risk_level != "正常")
     # 平均目标进度（仅统计有目标进度的任务）

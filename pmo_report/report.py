@@ -418,16 +418,18 @@ class ReportGenerator:
 
     # ---- 主入口 ----
     def render(self, stats: ProjectStats, use_ai: bool = True, today: Optional[date] = None,
-               rules: Dict = None, prev_stats: Optional[Dict] = None) -> Dict[str, str]:
+               rules: Dict = None, prev_stats: Optional[Dict] = None,
+               projects_data: Optional[List[Dict]] = None) -> Dict[str, str]:
         """生成周报。返回 {report, report_html, report_text, ai_used, error, numbers_corrected}。
-        prev_stats：上一期的统计 dict，用于生成「与上周对比」章节。"""
+        prev_stats：上一期的统计 dict，用于生成「与上周对比」章节。
+        projects_data：分项目数据 [{name, stats}]，供精细模块（项目数据表/分项目区块）使用。"""
         today = today or date.today()
         rules = rules or {}
 
         # 模板若是 blocks（list），走模块化渲染
         if isinstance(self.template, list):
             return self.render_blocks(self.template, stats, use_ai=use_ai, today=today, rules=rules,
-                                      prev_stats=prev_stats)
+                                      prev_stats=prev_stats, projects_data=projects_data)
 
         overview = next_plan = ""
         ai_used = False
@@ -468,6 +470,8 @@ class ReportGenerator:
         html_fields["stats_table"] = stats_html
         html_fields["status_summary"] = status_html
         html_fields["risks"] = risks_html
+        # 语义数据占位符：{完成率} {风险数} …（HTML 模板也可用）
+        html_fields.update(_semantic_values(stats))
 
         report_html = self._render_template(self.template, html_fields)
 
@@ -482,6 +486,7 @@ class ReportGenerator:
             "next_plan": next_plan,
             "delta_text": delta_text,
         }
+        text_fields.update(_semantic_values(stats))
         report_text = self._render_template(DEFAULT_TEMPLATE_TEXT, text_fields)
         return {
             "report": report_html,   # 向前兼容
@@ -503,8 +508,10 @@ class ReportGenerator:
     # ================= JSON Blocks 渲染 =================
     def render_blocks(self, blocks, stats: ProjectStats, use_ai: bool = True,
                       today: Optional[date] = None, rules: Dict = None,
-                      prev_stats: Optional[Dict] = None) -> Dict[str, str]:
-        """按 blocks 列表渲染周报。每个 block 由类型对应函数渲染。"""
+                      prev_stats: Optional[Dict] = None,
+                      projects_data: Optional[List[Dict]] = None) -> Dict[str, str]:
+        """按 blocks 列表渲染周报。每个 block 由类型对应函数渲染。
+        projects_data：分项目数据 [{name, stats}]，供「项目数据表/分项目区块」等精细模块使用。"""
         today = today or date.today()
         rules = rules or {}
 
@@ -534,13 +541,22 @@ class ReportGenerator:
             "today": today.strftime("%Y-%m-%d"),
             "delta_html": self._delta_section(stats, prev_stats),
             "delta_text": self._delta_section(stats, prev_stats, for_text=True),
+            "delta_rows": self._delta_parts(stats, prev_stats),
+            "projects": projects_data or [],
         }
 
         html_parts, text_parts = [], []
+        # 数据自动绑定型模块（人工可勾选关闭：binding=false → 输出占位提示）
+        DATA_BOUND_TYPES = {"kpi", "stats_table", "status", "risk_list", "delta",
+                            "transition", "project_table", "project_sections"}
         for block in blocks or []:
             typ = (block or {}).get("type", "")
-            renderer = BLOCK_RENDERERS.get(typ, BLOCK_RENDERERS["custom"])
-            h_seg, t_seg = renderer(block, ctx, self)
+            if typ in DATA_BOUND_TYPES and block.get("binding", True) is False:
+                h_seg, t_seg = ("<p style='color:var(--muted)'>（该模块已关闭数据绑定，请在模板中开启）</p>",
+                                "（该模块已关闭数据绑定）")
+            else:
+                renderer = BLOCK_RENDERERS.get(typ, BLOCK_RENDERERS["custom"])
+                h_seg, t_seg = renderer(block, ctx, self)
             if h_seg:
                 html_parts.append(h_seg)
             if t_seg:
@@ -608,6 +624,17 @@ KPI_LABELS = {
 def _block_kpi(block, ctx, _gen):
     stats = ctx["stats"]
     keys = block.get("keys") or ["total", "done", "completion_rate"]
+    # 每个 KPI 卡片的绝对值副文案（绝对值 + 百分比 双呈现）
+    abs_subs = {
+        "total": f"{stats.total_tasks} 项",
+        "done": f"{stats.done_count} 项",
+        "in_progress": f"{stats.in_progress_count} 项",
+        "not_started": f"{stats.not_started_count} 项",
+        "completion_rate": f"{stats.done_count}/{stats.total_tasks} 已完成",
+        "avg_progress": f"目标 {stats.avg_target_progress:.0f}%" if stats.avg_target_progress is not None else "",
+        "avg_target_progress": f"实际 {stats.avg_progress:.0f}%",
+        "risk": f"{stats.risk_count} 项",
+    }
     items = []
     for k in keys:
         label = KPI_LABELS.get(k, k)
@@ -619,15 +646,17 @@ def _block_kpi(block, ctx, _gen):
             v = f"{val:.0f}%"
         else:
             v = str(val)
-        items.append({"label": label, "value": v})
+        items.append({"label": label, "value": v, "sub": abs_subs.get(k, "")})
     html = '<div style="display:flex;flex-wrap:wrap;gap:10px;margin:12px 0;">'
     for it in items:
         html += (f'<div style="flex:1;min-width:100px;border:1px solid #E4E7EC;'
                  f'border-radius:8px;padding:10px 14px;text-align:center;">'
                  f'<div style="font-size:20px;font-weight:700;color:#4A6CF7;">{it["value"]}</div>'
-                 f'<div style="font-size:11px;color:#6B6B80;">{it["label"]}</div></div>')
+                 f'<div style="font-size:11px;color:#6B6B80;">{it["label"]}</div>'
+                 + (f'<div style="font-size:11px;color:#9AA0B5;">{it["sub"]}</div>' if it["sub"] else '')
+                 + '</div>')
     html += "</div>"
-    text = "；".join(f"{it['label']}:{it['value']}" for it in items)
+    text = "；".join(f"{it['label']}:{it['value']}" + (f"（{it['sub']}）" if it["sub"] else "") for it in items)
     return html, text
 
 
@@ -708,6 +737,92 @@ def _block_delta(block, ctx, _gen):
     return "<p>（暂无上一期数据，环比章节将在保存历史后自动出现）</p>", "（暂无上一期数据）"
 
 
+def _block_transition(block, ctx, _gen):
+    """过渡叙述：基于环比生成「结构一致」的过渡段，保证各版本叙述风格统一。
+    不依赖 AI，纯规则、确定性——每期读起来句式一致，便于对比。"""
+    stats = ctx["stats"]
+    rows = ctx.get("delta_rows") or []
+    if not rows:
+        return ("<p>本周为首期周报，已完成基线统计；下周起将自动与本期对比，形成连续的趋势叙述。</p>",
+                "本周为首期周报，已完成基线统计；下周起将自动与本期对比，形成连续的趋势叙述。")
+    # 提炼关键趋势
+    cr = next((r for r in rows if r.startswith("完成率")), None)
+    rk = next((r for r in rows if r.startswith("风险项")), None)
+    np_ = next((r for r in rows if r.startswith("连续两周无进展")), None)
+    trend = ""
+    if cr:
+        trend += cr + "；"
+    if rk:
+        trend += rk + "；"
+    if np_:
+        trend += np_ + "；"
+    if not trend:
+        trend = "；".join(rows) + "；"
+    sentence = f"本周项目整体呈延续态势：{trend}请结合下方明细与风险清单跟进重点事项。"
+    return f"<p>{sentence}</p>", sentence
+
+
+def _block_project_table(block, ctx, _gen):
+    """重点项目数据表格：按项目/分组对比 任务数/完成率/平均进度/风险/滞后（绝对值+百分比）。"""
+    projects = ctx.get("projects") or []
+    if not projects:
+        return "<p>（无分项目数据：请在「数据」页先上传并选择项目）</p>", "（无分项目数据）"
+    # 可配置只看部分项目（逗号分隔名称）
+    only = [n.strip() for n in (block.get("projects") or "").split(",") if n.strip()]
+    picked = [p for p in projects if (not only) or p.get("name") in only]
+    if not picked:
+        picked = projects
+    def row(p):
+        s = p.get("stats") or {}
+        return (p.get("name") or "未命名", s.get("total", 0), s.get("completion_rate"),
+                s.get("avg_progress"), s.get("risk", 0), s.get("delayed", 0))
+    rows = [row(p) for p in picked]
+    html = ['<table class="kpi" style="border-collapse:collapse;margin:10px 0;width:100%;">',
+            '<tr><th style="border:1px solid #E4E7EC;padding:6px 12px;background:#F7F8FA;">项目</th>'
+            '<th style="border:1px solid #E4E7EC;padding:6px 12px;background:#F7F8FA;">任务数</th>'
+            '<th style="border:1px solid #E4E7EC;padding:6px 12px;background:#F7F8FA;">完成率</th>'
+            '<th style="border:1px solid #E4E7EC;padding:6px 12px;background:#F7F8FA;">平均实际</th>'
+            '<th style="border:1px solid #E4E7EC;padding:6px 12px;background:#F7F8FA;">风险</th>'
+            '<th style="border:1px solid #E4E7EC;padding:6px 12px;background:#F7F8FA;">滞后</th></tr>']
+    for r in rows:
+        cr = f"{r[2]}%" if r[2] is not None else "-"
+        ap = f"{r[3]}%" if r[3] is not None else "-"
+        html.append(f"<tr><td style='border:1px solid #E4E7EC;padding:6px 12px;'><b>{r[0]}</b></td>"
+                    f"<td style='border:1px solid #E4E7EC;padding:6px 12px;'>{r[1]}</td>"
+                    f"<td style='border:1px solid #E4E7EC;padding:6px 12px;'>{cr}</td>"
+                    f"<td style='border:1px solid #E4E7EC;padding:6px 12px;'>{ap}</td>"
+                    f"<td style='border:1px solid #E4E7EC;padding:6px 12px;'>{r[4]}</td>"
+                    f"<td style='border:1px solid #E4E7EC;padding:6px 12px;'>{r[5]}</td></tr>")
+    html.append("</table>")
+    text = "\n".join(" | ".join(str(x) for x in r) for r in rows)
+    return "\n".join(html), text
+
+
+def _block_project_sections(block, ctx, _gen):
+    """分项目区块：每个项目渲染独立小节（项目名 + KPI + 风险清单），精细分项呈现。"""
+    projects = ctx.get("projects") or []
+    if not projects:
+        return "<p>（无分项目数据）</p>", "（无分项目数据）"
+    only = [n.strip() for n in (block.get("projects") or "").split(",") if n.strip()]
+    picked = [p for p in projects if (not only) or p.get("name") in only] or projects
+    html_parts, text_parts = [], []
+    for p in picked:
+        s = p.get("stats") or {}
+        nm = p.get("name") or "未命名"
+        cr = f"{s.get('completion_rate')}%" if s.get("completion_rate") is not None else "-"
+        ap = f"{s.get('avg_progress')}%" if s.get("avg_progress") is not None else "-"
+        risks = [t for t in (s.get("tasks") or []) if t.get("risk_level") not in (None, "", "正常")]
+        html_parts.append(f"<h3 style='margin:14px 0 6px;color:#4A6CF7;'>📦 {nm}</h3>")
+        html_parts.append(f"<p style='margin:4px 0;'>任务 {s.get('total',0)} 项 · 完成率 {cr} · 平均实际 {ap} · 风险 {s.get('risk',0)} · 滞后 {s.get('delayed',0)}</p>")
+        text_parts.append(f"{nm}：任务 {s.get('total',0)} 项，完成率 {cr}，平均实际 {ap}，风险 {s.get('risk',0)}，滞后 {s.get('delayed',0)}")
+        if risks:
+            html_parts.append('<ul style="margin:6px 0 6px 18px;line-height:1.7;">' + "".join(
+                f"<li><span class='pill' style='background:{'#C0504D' if t['risk_level']=='风险' else '#E65100'};color:#fff;border-radius:10px;padding:1px 8px;font-size:11px;'>{t['risk_level']}</span> <b>{t['name']}</b>：{t.get('risk_reason') or '需关注'}</li>"
+                for t in risks[:8]) + "</ul>")
+            text_parts.append("风险：" + "；".join(f"{t['name']}（{t['risk_level']}）" for t in risks[:8]))
+    return "\n".join(html_parts), "\n\n".join(text_parts)
+
+
 def _block_custom(block, ctx, _gen):
     content = block.get("content", "")
     is_html = block.get("is_html", False)
@@ -730,17 +845,59 @@ BLOCK_RENDERERS = {
     "risk_list": _block_risk_list,
     "plan": _block_plan,
     "delta": _block_delta,
+    "transition": _block_transition,
+    "project_table": _block_project_table,
+    "project_sections": _block_project_sections,
     "custom": _block_custom,
 }
 
 
+# ---------- 语义占位符（数据驱动，可在模板文本中任意使用） ----------
+# 引用路径 = 数据在统计模型中的位置；计算方式 = 取数公式；供前端「占位符说明」展示与编辑
+PLACEHOLDER_DOC = {
+    "{完成率}":     {"path": "统计 → 完成率", "formula": "已完成任务数 / 总任务数 × 100%", "type": "百分比"},
+    "{平均进度}":   {"path": "统计 → 平均实际进度", "formula": "Σ任务进度 / 任务数（有权重时按权重）", "type": "百分比"},
+    "{平均目标}":   {"path": "统计 → 平均目标进度", "formula": "按目标进度曲线逐任务计算后取平均", "type": "百分比"},
+    "{总任务}":     {"path": "统计 → 总任务数", "formula": "任务列表长度", "type": "整数"},
+    "{已完成}":     {"path": "统计 → 已完成", "formula": "状态为「已完成」的任务数", "type": "整数"},
+    "{进行中}":     {"path": "统计 → 进行中", "formula": "状态为「进行中」的任务数", "type": "整数"},
+    "{未开始}":     {"path": "统计 → 未开始", "formula": "状态为「未开始」的任务数", "type": "整数"},
+    "{滞后数}":     {"path": "统计 → 滞后", "formula": "状态为「已滞后」的任务数", "type": "整数"},
+    "{风险数}":     {"path": "统计 → 风险", "formula": "风险等级 ≠ 正常的任务数", "type": "整数"},
+    "{关键任务}":   {"path": "任务 → 人工标注「关键」", "formula": "勾选了「关键」的任务名（顿号分隔）", "type": "文本"},
+    "{project_name}": {"path": "项目 → 名称", "formula": "生成时填写的项目名", "type": "文本"},
+    "{period}":     {"path": "项目 → 周期", "formula": "生成时填写的统计周期", "type": "文本"},
+    "{today}":      {"path": "系统 → 今天", "formula": "生成日期", "type": "文本"},
+}
+
+
+def _semantic_values(stats: ProjectStats) -> Dict[str, str]:
+    """把统计对象转成语义占位符的值（键不含花括号）。"""
+    return {
+        "完成率": f"{stats.completion_rate}%",
+        "平均进度": f"{stats.avg_progress}%",
+        "平均目标": f"{stats.avg_target_progress:.0f}%" if stats.avg_target_progress is not None else "-",
+        "总任务": str(stats.total_tasks),
+        "已完成": str(stats.done_count),
+        "进行中": str(stats.in_progress_count),
+        "未开始": str(stats.not_started_count),
+        "滞后数": str(stats.delayed_count),
+        "风险数": str(stats.risk_count),
+        "关键任务": "、".join(ts.task.name for ts in stats.task_stats if ts.is_critical) or "无",
+    }
+
+
 def _sub_vars(text: str, ctx: Dict) -> str:
-    """替换 {project_name} {period} {today} 等基础占位符。"""
+    """替换占位符：基础（project_name/period/today）+ 语义数据占位符（{完成率} 等）。"""
     if not text:
         return ""
     result = text
     for k in ("project_name", "period", "today"):
         result = result.replace("{" + k + "}", str(ctx.get(k, "")))
+    stats = ctx.get("stats")
+    if stats is not None:
+        for k, v in _semantic_values(stats).items():
+            result = result.replace("{" + k + "}", v)
     return result
 
 

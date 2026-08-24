@@ -39,6 +39,9 @@ MODULE_LIBRARY: List[Dict] = [
     {"type": "risk_list", "label": "风险清单", "desc": "风险与关注(带颜色)", "icon": "⚠"},
     {"type": "plan",   "label": "下周计划", "desc": "下周计划段落", "icon": "→"},
     {"type": "delta",  "label": "环比上周", "desc": "与上周对比（完成率/风险/滞后）", "icon": "⇄"},
+    {"type": "transition", "label": "过渡叙述", "desc": "跨版本一致的衔接段（纯规则、确定性）", "icon": "➡"},
+    {"type": "project_table", "label": "重点项目表", "desc": "按项目对比 任务/完成率/风险/滞后", "icon": "▦"},
+    {"type": "project_sections", "label": "分项目区块", "desc": "每个项目独立小节（KPI+风险）", "icon": "📦"},
     {"type": "custom", "label": "自定义块", "desc": "自由 HTML/文本", "icon": "+"},
 ]
 

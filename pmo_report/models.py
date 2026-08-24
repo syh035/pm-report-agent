@@ -36,6 +36,7 @@ class Task:
     depends_on: str = ""              # 依赖的任务名（风险传递用，可空）
     slow_ok: bool = False             # 用户标记：该任务进度偏慢属正常，不再标红
     weight: float = 1.0               # 任务权重（影响完成率/平均进度，默认 1）
+    critical: bool = False            # 人工标注：关键路径任务（不再自动计算）
 
     def to_dict(self) -> Dict:
         d = asdict(self)
@@ -53,6 +54,8 @@ class Project:
     period: str = ""                  # 统计周期（周），如 "2026-W33"
     source_files: List[str] = field(default_factory=list)  # 输入来源文件
     tasks: List[Task] = field(default_factory=list)
+    parse_stats: Dict = field(default_factory=dict)   # 解析质量度量（规则命中/模糊行/忽略），不入 to_dict
+    rule_snapshot: List = field(default_factory=list) # AI 提炼前的规则解析结果快照（供 diff 视图），不入 to_dict
 
     def to_dict(self) -> Dict:
         return {
