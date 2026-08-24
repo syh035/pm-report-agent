@@ -1,0 +1,41 @@
+{
+  "file": "examples/input/脏文本_示例.docx",
+  "tasks": [
+    {
+      "name": "结算中心重构",
+      "owner": "张三",
+      "progress": 50,
+      "status": "进行中",
+      "plan_start": null,
+      "plan_end": null,
+      "note": "• 结算中心重构 张三 负责，当前进度50%，预计下周完成联调"
+    },
+    {
+      "name": "权限模块升级",
+      "owner": "",
+      "progress": null,
+      "status": "已完成",
+      "plan_start": null,
+      "plan_end": null,
+      "note": "• 权限模块升级 李四 已完成，已上线"
+    },
+    {
+      "name": "报表导出二期",
+      "owner": "",
+      "progress": 30,
+      "status": "进行中",
+      "plan_start": null,
+      "plan_end": null,
+      "note": "• 报表导出二期 王五 进度30%，有风险，需关注"
+    },
+    {
+      "name": "接口联调",
+      "owner": "",
+      "progress": 100,
+      "status": "已完成",
+      "plan_start": null,
+      "plan_end": null,
+      "note": "接口联调 已完成 进度100%"
+    }
+  ]
+}

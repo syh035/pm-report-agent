@@ -1,0 +1,68 @@
+{
+  "file": "examples/input/脏数据_混合格式.csv",
+  "tasks": [
+    {
+      "name": "订单中心重构",
+      "owner": "张三",
+      "progress": 50.0,
+      "status": "进行中",
+      "plan_start": "2026-08-01",
+      "plan_end": "2026-08-15",
+      "note": "小数进度，应×100"
+    },
+    {
+      "name": "支付网关升级",
+      "owner": "李四",
+      "progress": 50.0,
+      "status": "已上线",
+      "plan_start": "2026-08-03",
+      "plan_end": "2026-08-20",
+      "note": "带百分号"
+    },
+    {
+      "name": "报表导出二期",
+      "owner": "王五",
+      "progress": 60.0,
+      "status": "进行中",
+      "plan_start": "2026-08-05",
+      "plan_end": "2026-08-25",
+      "note": "全角百分号"
+    },
+    {
+      "name": "权限优化",
+      "owner": "赵六",
+      "progress": 75.0,
+      "status": "延期",
+      "plan_start": "2026-08-10",
+      "plan_end": "2026-08-28",
+      "note": "美式日期+小数"
+    },
+    {
+      "name": "消息推送",
+      "owner": "李四",
+      "progress": null,
+      "status": "有风险",
+      "plan_start": "2026-08-12",
+      "plan_end": "2026-09-01",
+      "note": "缺进度"
+    },
+    {
+      "name": "数据看板",
+      "owner": "",
+      "progress": 40.0,
+      "status": "进行中",
+      "plan_start": "2026-08-14",
+      "plan_end": "2026-09-05",
+      "note": "缺负责人"
+    },
+    {
+      "name": "结算引擎",
+      "owner": "",
+      "progress": 20.0,
+      "status": "未开始",
+      "plan_start": "2026-08-16",
+      "plan_end": "2026-09-10",
+      "note": "空行后的任务"
+    }
+  ]
+}

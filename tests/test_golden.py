@@ -24,6 +24,9 @@ CASES = [
     ("进度表_示例.csv.json", tabular_parser.parse_csv, "进度表_示例.csv"),
     ("样本测试集.csv.json", tabular_parser.parse_csv, "样本测试集.csv"),
     ("周度纪要_示例.docx.json", lambda p: text_parser.parse_docx(p, use_ai=False), "周度纪要_示例.docx"),
+    ("脏数据_混合格式.csv.json", tabular_parser.parse_csv, "脏数据_混合格式.csv"),
+    ("脏数据_GBK.csv.json", tabular_parser.parse_csv, "脏数据_GBK.csv"),
+    ("脏文本_示例.docx.json", lambda p: text_parser.parse_docx(p, use_ai=False), "脏文本_示例.docx"),
 ]
 
 FIELD_KEYS = ("name", "owner", "progress", "status", "plan_start", "plan_end", "note")

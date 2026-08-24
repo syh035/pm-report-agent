@@ -25,12 +25,23 @@ def parse_date(value: Any) -> Optional[date]:
     if not s:
         return None
 
+    # 美式月/日/年（年在后）：8/16/2026、8/16/26（优先处理，避免被当成 年/月/日 误读）
+    m_us = re.search(r"(\d{1,2})/(\d{1,2})/(\d{2,4})$", s)
+    if m_us:
+        mo, d, y = int(m_us.group(1)), int(m_us.group(2)), int(m_us.group(3))
+        if 1 <= mo <= 12 and 1 <= d <= 31:
+            if y < 100:
+                y += 2000
+            try:
+                return date(y, mo, d)
+            except ValueError:
+                pass
+
     # 常见格式
     patterns = [
         r"(\d{4})-(\d{1,2})-(\d{1,2})",           # 2026-08-16
         r"(\d{4})[/.](\d{1,2})[/.](\d{1,2})",     # 2026/8/16, 2026.8.16
         r"(\d{4})年(\d{1,2})月(\d{1,2})日?",       # 2026年8月16日
-        r"(\d{1,2})[/](\d{1,2})[/](\d{2,4})",     # 8/16/2026
         r"(\d{4})-(\d{1,2})",                     # 2026-08 年月
         r"(\d{4})[/.](\d{1,2})",                  # 2026.08 年月
     ]

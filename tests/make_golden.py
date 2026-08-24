@@ -19,6 +19,10 @@ CASES = [
     ("进度表_示例.csv", tabular_parser.parse_csv, "进度表_示例.csv.json"),
     ("样本测试集.csv", tabular_parser.parse_csv, "样本测试集.csv.json"),
     ("周度纪要_示例.docx", lambda p: text_parser.parse_docx(p, use_ai=False), "周度纪要_示例.docx.json"),
+    # 脏数据用例（对抗性输入）：乱列名/多种进度与日期写法/缺失字段/GBK 编码/叙述干扰行
+    ("脏数据_混合格式.csv", tabular_parser.parse_csv, "脏数据_混合格式.csv.json"),
+    ("脏数据_GBK.csv", tabular_parser.parse_csv, "脏数据_GBK.csv.json"),
+    ("脏文本_示例.docx", lambda p: text_parser.parse_docx(p, use_ai=False), "脏文本_示例.docx.json"),
 ]
 
 

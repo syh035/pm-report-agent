@@ -1,0 +1,23 @@
+{
+  "file": "examples/input/脏数据_GBK.csv",
+  "tasks": [
+    {
+      "name": "结算中心",
+      "owner": "张三",
+      "progress": 30.0,
+      "status": "进行中",
+      "plan_start": null,
+      "plan_end": null,
+      "note": ""
+    },
+    {
+      "name": "风控引擎",
+      "owner": "李四",
+      "progress": 60.0,
+      "status": "已上线",
+      "plan_start": null,
+      "plan_end": null,
+      "note": ""
+    }
+  ]
+}
