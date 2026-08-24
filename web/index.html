@@ -1,0 +1,606 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>PM Report Agent · AI 项目管理周报面板</title>
+<style>
+  :root {
+    --primary: #4A6CF7; --primary-dark: #3B56D8; --bg: #F7F8FA;
+    --card: #fff; --border: #E4E7EC; --text: #2D3142; --muted: #6B6B80;
+    --danger: #C0504D; --success: #5CB85C;
+  }
+  * { margin:0; padding:0; box-sizing:border-box; }
+  body { font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',system-ui,sans-serif; background:var(--bg); color:var(--text); line-height:1.6; }
+  .topbar { background:var(--primary); color:#fff; padding:14px 24px; display:flex; align-items:center; justify-content:space-between; }
+  .topbar h1 { font-size:17px; font-weight:600; }
+  .topbar .sub { font-size:12px; opacity:.8; }
+
+  .layout { display:flex; height:calc(100vh - 56px); }
+  .sidebar { width:260px; background:#fff; border-right:1px solid var(--border); padding:12px; overflow-y:auto; }
+  .main { flex:1; overflow-y:auto; padding:20px; }
+
+  .side-title { font-size:12px; font-weight:600; color:var(--muted); padding:6px 8px; text-transform:uppercase; letter-spacing:.05em; }
+  .tree-item { border-radius:6px; padding:6px 10px; font-size:13px; cursor:pointer; display:flex; align-items:center; gap:8px; }
+  .tree-item:hover { background:#EEF2FF; }
+  .tree-item.active { background:var(--primary); color:#fff; }
+  .tree-item .ghost { margin-left:auto; opacity:0; transition:.15s; }
+  .tree-item:hover .ghost { opacity:.6; }
+  .tree-item .ghost:hover { opacity:1; }
+  .side-btn { width:100%; margin-top:8px; padding:8px; border:1px dashed var(--border); border-radius:6px; background:transparent; color:var(--muted); cursor:pointer; font-size:12px; }
+  .side-btn:hover { border-color:var(--primary); color:var(--primary); }
+  .group-head { display:flex; align-items:center; gap:6px; padding:4px 8px; font-size:13px; font-weight:600; border-radius:6px; cursor:pointer; }
+  .group-head:hover { background:#F0F2F5; }
+  .child { padding-left:20px; }
+
+  .tabs { display:flex; border-bottom:1px solid var(--border); margin-bottom:16px; }
+  .tab { padding:8px 16px; cursor:pointer; font-weight:500; color:var(--muted); border-bottom:2px solid transparent; }
+  .tab.active { color:var(--primary); border-bottom-color:var(--primary); }
+  .panel { display:none; } .panel.active { display:block; }
+  .card { background:var(--card); border:1px solid var(--border); border-radius:8px; padding:18px; margin-bottom:16px; }
+  .card h2 { font-size:14px; margin-bottom:12px; }
+  .btn { padding:7px 14px; border:none; border-radius:6px; cursor:pointer; font-size:13px; font-weight:500; }
+  .btn-primary { background:var(--primary); color:#fff; } .btn-primary:hover{background:var(--primary-dark);}
+  .btn-outline { background:#fff; border:1px solid var(--border); color:var(--text); }
+  .btn-danger { background:#fff; border:1px solid var(--danger); color:var(--danger); }
+  .row { display:flex; gap:8px; flex-wrap:wrap; align-items:center; }
+  input[type=number],input[type=text],textarea{ border:1px solid var(--border); border-radius:6px; padding:8px 10px; font-size:13px; }
+  .dropzone { border:2px dashed var(--border); border-radius:8px; padding:24px; text-align:center; color:var(--muted); cursor:pointer; transition:.2s; background:#fff; }
+  .dropzone.hover { border-color:var(--primary); background:#EEF2FF; }
+  table { width:100%; border-collapse:collapse; font-size:12.5px; }
+  th { text-align:left; background:var(--bg); padding:7px; border-bottom:1px solid var(--border); cursor:pointer; user-select:none; }
+  th:hover { background:#EDEEF2; }
+  td { padding:7px; border-bottom:1px solid var(--border); }
+  tr:hover td { background:#F9FAFB; }
+  .kpi-grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(120px,1fr)); gap:10px; margin-bottom:14px; }
+  .kpi { border:1px solid var(--border); border-radius:8px; padding:12px; text-align:center; }
+  .kpi .v { font-size:22px; font-weight:700; color:var(--primary); }
+  .kpi .l { font-size:11px; color:var(--muted); margin-top:2px; }
+  .pill { display:inline-block; padding:2px 9px; border-radius:20px; font-size:11px; font-weight:600; color:#fff; }
+  .field { margin-bottom:12px; } .field label { font-size:12px;color:var(--muted);display:block;margin-bottom:4px; } .field .hint{font-size:11px;color:var(--muted);}
+  .msg { padding:9px 12px; border-radius:6px; margin-top:10px; font-size:13px; display:none; }
+  .msg.ok { display:block; background:#E8F5E9; color:#2E7D32; } .msg.err { display:block; background:#FDE8E8; color:#C62828; }
+  .report-content { background:#fff; border:1px solid var(--border); border-radius:8px; padding:20px; }
+  .report-content h1{font-size:20px;margin-bottom:4px;}
+  .report-content h2{font-size:15px;margin:14px 0 6px;color:var(--primary);border-left:4px solid var(--primary);padding-left:8px;}
+  .report-content table.kpi{border-collapse:collapse;} .report-content table.kpi td{border:1px solid var(--border);padding:6px 14px;}
+  .report-content ul{margin-left:20px;} .report-content .pill{margin-right:6px;}
+  .history-list{list-style:none;} .history-list li{display:flex;justify-content:space-between;align-items:center;padding:7px;border-bottom:1px solid var(--border);font-size:13px;}
+  .filters{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:10px;} .filters select,.filters input{border:1px solid var(--border);border-radius:5px;padding:5px 8px;font-size:12px;}
+  .color-dot{display:inline-block;width:16px;height:16px;border-radius:4px;vertical-align:middle;border:1px solid #ccc;}
+</style>
+</head>
+<body>
+
+<div class="topbar">
+  <div><h1>PM Report Agent</h1><div class="sub">AI 项目管理智能周报 · 数据 → 统计 → 周报</div></div>
+  <button class="btn btn-primary" style="background:rgba(255,255,255,.2)" onclick="openUpload()">上传资料</button>
+</div>
+
+<div class="layout">
+  <!-- 左侧边栏 -->
+  <div class="sidebar">
+    <div class="side-title">工作区</div>
+    <div id="workspaceTree"></div>
+    <button class="side-btn" onclick="createGroup()">＋ 新建分组</button>
+    <div class="side-btn" onclick="openUpload()" style="border-style:solid">↑ 从文件导入</div>
+  </div>
+
+  <!-- 主区域 -->
+  <div class="main">
+    <div class="tabs">
+      <div class="tab active" data-tab="data">数据</div>
+      <div class="tab" data-tab="rules">规则配置</div>
+      <div class="tab" data-tab="template">模板</div>
+      <div class="tab" data-tab="report">周报 / 历史</div>
+    </div>
+
+    <!-- 数据面板 -->
+    <div class="panel active" id="panel-data">
+      <div class="card" id="currentView" style="display:none;">
+        <h2 id="viewTitle"></h2>
+        <div class="kpi-grid" id="viewKpis"></div>
+        <div class="filters" id="viewFilters"></div>
+        <div style="overflow-x:auto;" id="viewTable"></div>
+      </div>
+      <div class="card" id="emptyHint">
+        <h2>尚无数据</h2>
+        <p style="font-size:13px;color:var(--muted)">点击右上角「上传资料」导入 Excel/CSV/Word/PDF，或拖拽文件到下方区域。</p>
+        <div class="dropzone" id="dropzone" style="margin-top:12px;">点击选择或拖拽文件导入</div>
+        <input type="file" id="fileInput" multiple style="display:none;">
+      </div>
+    </div>
+
+    <!-- 规则面板 -->
+    <div class="panel" id="panel-rules">
+      <div class="card">
+        <h2>风险分级阈值与颜色</h2>
+        <div class="row" id="ruleFields"></div>
+        <div class="row" style="margin-top:16px;">
+          <button class="btn btn-primary" onclick="saveRules()">保存规则</button>
+          <button class="btn btn-outline" onclick="loadRules()">重新载入</button>
+          <button class="btn btn-danger" onclick="resetRules()">恢复默认（清理旧规则）</button>
+          <button class="btn btn-outline" onclick="toggleHistory()">查看规则历史</button>
+        </div>
+        <div class="msg" id="rulesMsg"></div>
+        <div id="rulesHistory" style="display:none;margin-top:14px;"><h3 style="font-size:13px;margin-bottom:8px">规则历史快照</h3><div id="rulesHistoryList"></div></div>
+      </div>
+    </div>
+
+    <!-- 模板面板 -->
+    <div class="panel" id="panel-template">
+      <div class="card">
+        <h2>可视化模板设计器</h2>
+        <p style="font-size:12px;color:var(--muted);margin-bottom:12px;">
+          从左侧模块库拖入模块，画布中可拖动排序、编辑内容。数据类模块自动绑定当前统计。
+        </p>
+        <div class="row" style="margin-bottom:12px;">
+          <input type="file" id="templateFile" accept=".docx,.pdf,.html,.md,.txt">
+          <button class="btn btn-primary" onclick="parseTemplate()">上传模板并用 AI 解析</button>
+          <button class="btn btn-outline" onclick="loadTemplate()">载入已存模板</button>
+          <button class="btn btn-outline" onclick="useDefaultTemplate()">载入默认</button>
+          <button class="btn btn-danger" onclick="resetTemplate()">恢复默认并清空</button>
+          <button class="btn btn-primary" onclick="saveTemplateBlocks()">保存模板</button>
+        </div>
+        <div style="display:flex;gap:12px;">
+          <!-- 模块库 -->
+          <div style="width:200px;flex-shrink:0;border:1px solid var(--border);border-radius:8px;padding:10px;background:#FAFBFC;">
+            <div style="font-size:12px;font-weight:600;color:var(--muted);margin-bottom:8px;">模块库（拖入画布）</div>
+            <div id="moduleLib"></div>
+          </div>
+          <!-- 画布 -->
+          <div style="flex:1;">
+            <div id="templateCanvas" style="min-height:300px;border:2px dashed var(--border);border-radius:8px;padding:10px;background:#fff;"></div>
+            <div id="templatePreview" style="display:none;margin-top:14px;border:1px solid var(--border);border-radius:8px;padding:12px;background:#FAFBFC;"></div>
+          </div>
+        </div>
+        <div class="msg" id="templateMsg"></div>
+      </div>
+    </div>
+
+    <!-- 周报面板 -->
+    <div class="panel" id="panel-report">
+      <div class="card">
+        <h2>生成周报</h2>
+        <div class="row">
+          <input type="text" id="genProject" placeholder="项目名称（可选）" style="width:200px">
+          <input type="text" id="genPeriod" placeholder="周期，如 2026-W33" style="width:150px">
+          <label style="font-size:13px;display:flex;gap:4px;align-items:center;"><input type="checkbox" id="genUseAI" checked>AI增强</label>
+          <button class="btn btn-primary" onclick="generateReport()">生成周报</button>
+        </div>
+        <div class="msg" id="genMsg"></div>
+        <div id="reportBox" class="report-content" style="margin-top:14px;min-height:200px;"></div>
+        <div class="row" style="margin-top:12px;" id="exportRow" style="display:none;">
+          <span style="font-size:13px;color:var(--muted)">导出：</span>
+          <button class="btn btn-outline" onclick="exportReport('word')">Word</button>
+          <button class="btn btn-outline" onclick="exportReport('text')">纯文本</button>
+          <button class="btn btn-outline" onclick="saveToHistory()">存入历史</button>
+        </div>
+      </div>
+      <div class="card">
+        <h2>历史周报</h2>
+        <ul class="history-list" id="historyList"></ul>
+      </div>
+    </div>
+  </div>
+</div>
+
+<input type="file" id="uploadInput" multiple style="display:none" accept=".xlsx,.xlsm,.csv,.docx,.pdf">
+<script>
+const $ = id => document.getElementById(id);
+let state = { sheet:{}, groups:{}, rules:{}, current:'', lastReport:null, sortBy:'', sortAsc:true, filters:{} };
+
+// ============ 工具 ============
+function esc(s){ s=s==null?'':String(s); return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
+function riskColor(level){ return state.rules[ level==='风险'?'color_risk' : level==='关注'?'color_warning':'color_normal' ] || '#888'; }
+function refreshRules(){ fetch('/api/rules').then(r=>r.json()).then(d=>{ state.rules=d.rules; loadWorkspace(); }); }
+
+// ============ 上传 ============
+function openUpload(){ $('uploadInput').click(); }
+$('uploadInput').addEventListener('change', e => uploadFiles(e.target.files));
+$('dropzone').addEventListener('click', ()=>$('fileInput').click());
+$('fileInput').addEventListener('change', e=>uploadFiles(e.target.files));
+['dragover','dragenter'].forEach(ev=>$('dropzone').addEventListener(ev,e=>{e.preventDefault();$('dropzone').classList.add('hover');}));
+['dragleave','drop'].forEach(ev=>$('dropzone').addEventListener(ev,e=>{e.preventDefault();$('dropzone').classList.remove('hover');}));
+$('dropzone').addEventListener('drop', e=>uploadFiles(e.dataTransfer.files));
+
+async function uploadFiles(files){
+  if(!files.length) return;
+  let fd = new FormData();
+  for(const f of files) fd.append('files', f);
+  const res = await fetch('/api/workspace/load',{method:'POST',body:fd});
+  const d = await res.json();
+  if(!res.ok){ alert('解析失败: '+JSON.stringify(d)); return; }
+  loadWorkspace();
+  if(d.created && d.created.length) selectSheet(d.created[0]);
+}
+
+// ============ 工作区侧边栏 ============
+async function loadWorkspace(){
+  const res = await fetch('/api/workspace'); const d = await res.json();
+  state.sheet = d.sheets; state.groups = d.groups;
+  let html = '';
+  // 分组
+  for(const gid in state.groups){
+    const g = state.groups[gid];
+    html += `<div><div class="group-head" onclick="selectGroup('${gid}')">📁 ${esc(g.name||'分组')}
+      <span class="ghost" style="margin-left:auto" onclick="event.stopPropagation();delGroup('${gid}')">🗑</span></div><div class="child">`;
+    g.sheets.forEach(sid=>{ html += itemHtml(sid, state.sheet[sid]); });
+    html += `</div></div>`;
+  }
+  // 未分组的 sheet
+  const grouped = new Set(Object.values(state.groups).flatMap(g=>g.sheets));
+  for(const sid in state.sheet){
+    if(!grouped.has(sid)) html += itemHtml(sid, state.sheet[sid]);
+  }
+  $('workspaceTree').innerHTML = html || '<div style="font-size:12px;color:var(--muted);padding:8px">（空，请上传资料）</div>';
+}
+function itemHtml(sid, sh){
+  if(!sh) return '';
+  return `<div class="tree-item ${state.current===sid?'active':''}" onclick="selectSheet('${sid}')">🧾 ${esc(sh.name)}
+    <span class="ghost" onclick="event.stopPropagation();renameSheet('${sid}')">✏</span>
+    <span class="ghost" onclick="event.stopPropagation();delSheet('${sid}')">🗑</span></div>`;
+}
+async function selectSheet(sid){
+  state.current = 'sheet:'+sid; $('emptyHint').style.display='none'; $('currentView').style.display='block';
+  renderSheetView(state.sheet[sid]);
+}
+async function selectGroup(gid){
+  const g = state.groups[gid]; state.current = 'group:'+gid;
+  $('emptyHint').style.display='none'; $('currentView').style.display='block';
+  renderGroupView(g);
+}
+async function delSheet(sid){ if(!confirm('删除该 sheet？'))return; await fetch('/api/workspace/sheet/'+sid+'/delete',{method:'POST'}); loadWorkspace(); }
+async function renameSheet(sid){
+  const name = prompt('新名称：', state.sheet[sid]?.name||'');
+  if(!name) return;
+  await fetch('/api/workspace/sheet/'+sid+'/rename',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name})});
+  loadWorkspace();
+}
+async function createGroup(){ const n=prompt('分组名称：','新分组'); if(!n)return; await fetch('/api/workspace/groups',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name:n})}); loadWorkspace(); }
+async function delGroup(gid){ if(!confirm('删除分组？（其中的 sheet 不会被删除）'))return; await fetch('/api/workspace/groups/'+gid+'/delete',{method:'POST'}); loadWorkspace(); }
+
+// ============ 数据表格渲染（含排序筛选颜色） ============
+function renderSheetView(sh){
+  $('viewTitle').textContent = '📊 ' + (sh.name||'sheet') + ' — 单项数据';
+  renderKpisFromTasks(sh.stats);
+  const tasks = (sh.stats?.tasks||[]).map(t=>({...t}));
+  renderTable(tasks, sh.name);
+}
+function renderGroupView(g){
+  $('viewTitle').textContent = '📁 ' + (g.name||'分组') + ' — 分组汇总';
+  const s = g.summary;
+  $('viewKpis').innerHTML = s ? kpiHtml(s.total,'总任务',s.completion_rate+'%','完成率',s.avg_progress+'%','平均实际',s.risk,'风险项') : '<div>无数据</div>';
+  const tasks = s ? s.tasks||[] : [];
+  renderTable(tasks, g.name);
+}
+function kpiHtml(v1,l1,v2,l2,v3,l3,v4,l4){
+  return `<div class="kpi"><div class="v">${v1}</div><div class="l">${l1}</div></div>
+          <div class="kpi"><div class="v">${v2}</div><div class="l">${l2}</div></div>
+          <div class="kpi"><div class="v">${v3}</div><div class="l">${l3}</div></div>
+          <div class="kpi"><div class="v">${v4}</div><div class="l">${l4}</div></div>`;
+}
+function renderKpisFromTasks(stats){
+  $('viewKpis').innerHTML = kpiHtml(stats.total,'总任务',stats.completion_rate+'%','完成率',stats.avg_progress+'%','平均实际',stats.risk||0,'风险项')
+    + (stats.avg_target_progress!=null?`<div class="kpi"><div class="v">${stats.avg_target_progress}%</div><div class="l">平均目标</div></div>`:'');
+}
+function renderTable(tasks, name){
+  // 筛选
+  const col = state.sortBy, asc = state.sortAsc;
+  let f = state.filters[name] = state.filters[name]||{status:'',risk:'',owner:''};
+  let rows = tasks.filter(t=>{
+    if(f.status && t.status!==f.status) return false;
+    if(f.risk && t.risk_level!==f.risk) return false;
+    if(f.owner && !(t.owner||'').includes(f.owner)) return false;
+    return true;
+  });
+  // 排序
+  if(col){
+    rows.sort((a,b)=>{
+      let x=0;
+      if(col==='progress') x=(a.progress||0)-(b.progress||0);
+      else if(col==='target') x=(a.target_progress||0)-(b.target_progress||0);
+      else x=String(a[col]||'').localeCompare(String(b[col]||''),'zh');
+      return asc?x:-x;
+    });
+  }
+  // 筛选控件
+  $('viewFilters').innerHTML = `
+    <select onchange="setFilter('${name}','status',this.value)">
+      <option value="">状态：全部</option>${['已完成','进行中','未开始','已滞后','有风险'].map(s=>`<option value="${s}" ${f.status===s?'selected':''}>${s}</option>`).join('')}
+    </select>
+    <select onchange="setFilter('${name}','risk',this.value)">
+      <option value="">风险：全部</option>${['正常','关注','风险'].map(s=>`<option value="${s}" ${f.risk===s?'selected':''}>${s}</option>`).join('')}
+    </select>
+    <input placeholder="负责人筛选" value="${esc(f.owner)}" onchange="setFilter('${name}','owner',this.value)">
+    <span style="font-size:12px;color:var(--muted)">共 ${rows.length} 条</span>`;
+  // 表头（带排序）
+  const th=(label,key,cls)=>`<th onclick="doSort('${name}','${key}')">${label}${state.sortBy===key?(asc?' ▲':' ▼'):''}</th>`;
+  let h = `<table><tr><th>#</th>${th('任务名','name')}${th('负责人','owner')}${th('实际进度','progress')}${th('目标进度','target')}<th>状态</th><th>风险</th>${th('计划完成','plan_end')}<th>说明</th></tr>`;
+  rows.forEach((t,i)=>{
+    const rc = riskColor(t.risk_level||'正常');
+    const rowStyle = t.risk_level==='风险'?`style="background:${tint(rc)}"`: (t.risk_level==='关注'?`style="background:${tint(rc,0.08)}"`:'');
+    h += `<tr ${rowStyle}><td>${i+1}</td>
+      <td>${esc(t.name)}</td><td>${esc(t.owner)}</td>
+      <td>${t.progress!=null?t.progress+'%':'-'}</td>
+      <td>${t.target_progress!=null?'<b>'+t.target_progress+'%</b>':'-'}</td>
+      <td>${esc(t.status)}</td>
+      <td><span class="pill" style="background:${rc}">${t.risk_level||'正常'}</span></td>
+      <td>${esc(t.plan_end||'-')}</td><td>${esc(t.risk_reason||'-')}</td></tr>`;
+  });
+  $('viewTable').innerHTML = h+'</table>';
+}
+function tint(hex, al){
+  const h=hex.replace('#',''); const r=parseInt(h.substr(0,2),16),g=parseInt(h.substr(2,2),16),b=parseInt(h.substr(4,2),16);
+  return `rgba(${r},${g},${b},${al==null?0.12:al})`;
+}
+function doSort(name,key){ if(state.sortBy===key){state.sortAsc=!state.sortAsc;}else{state.sortBy=key;state.sortAsc=true;} renderTableForCurrent(); }
+function setFilter(name,key,val){ state.filters[name]=state.filters[name]||{}; state.filters[name][key]=val; renderTableForCurrent(); }
+function renderTableForCurrent(){
+  const cur = state.current;
+  if(cur && cur.startsWith('sheet:')) renderSheetView(state.sheet[cur.split(':')[1]]);
+  else if(cur && cur.startsWith('group:')) renderGroupView(state.groups[cur.split(':')[1]]);
+}
+
+// ============ 规则 ============
+async function loadRules(){
+  const res = await fetch('/api/rules'); const d = await res.json();
+  state.rules = d.rules;
+  let html='';
+  for(const k in d.rules){
+    const m=d.meta[k]||{};
+    if(m.type==='color'){
+      html+=`<div class="field"><label>${m.label||k} <span class="color-dot" style="background:${d.rules[k]}"></span></label>
+        <input type="color" id="rule_${k}" value="${d.rules[k]}" onchange="$('#rule_${k}').value=this.value">
+        <div class="hint">${m.desc||''}</div></div>`;
+    }else{
+      html+=`<div class="field"><label>${m.label||k}（${m.unit||''}）</label>
+        <input type="number" id="rule_${k}" value="${d.rules[k]}" min="${m.min||0}" max="${m.max||999}">
+        <div class="hint">${m.desc||''}</div></div>`;
+    }
+  }
+  $('ruleFields').innerHTML=html;
+}
+async function saveRules(){
+  const body={};
+  ['delay_days_danger','risk_near_end_days','slow_progress_pct'].forEach(k=>{body[k]=parseInt($('rule_'+k).value)||0;});
+  ['color_risk','color_warning','color_normal'].forEach(k=>body[k]=$('rule_'+k).value);
+  const res=await fetch('/api/rules',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
+  const d=await res.json();
+  $('rulesMsg').className='msg ok'; $('rulesMsg').textContent=d.note||'已保存';
+  refreshRules();
+}
+async function resetRules(){
+  if(!confirm('恢复默认规则？旧规则会归档到历史。'))return;
+  await fetch('/api/rules/reset',{method:'POST'}); loadRules(); refreshRules();
+  $('rulesMsg').className='msg ok'; $('rulesMsg').textContent='已恢复默认';
+}
+async function toggleHistory(){
+  const box=$('rulesHistory'); box.style.display=box.style.display==='none'?'block':'none';
+  if(box.style.display==='block'){
+    const d=await (await fetch('/api/rules/history')).json();
+    $('rulesHistoryList').innerHTML=d.history.slice(0,10).map(h=>
+      `<div style="font-size:12px;padding:5px 0;border-bottom:1px solid var(--border)">${h.time} — 超期${h.rules.delay_days_danger}天/临近${h.rules.risk_near_end_days}天/偏慢${h.rules.slow_progress_pct}%</div>`).join('')||'<div style="font-size:12px;color:var(--muted)">暂无历史</div>';
+  }
+}
+
+// ============ 模板 ============
+// ============ 可视化模板编辑器（blocks） ============
+let tplBlocks = [];           // 当前画布 blocks
+let tplModules = [];          // 模块库
+let tplKpiOptions = [];       // KPI 可选字段
+let tplSet = state;           // 共享 state
+
+const MODULE_DEFAULTS = {
+  'title':   {title:'{project_name} 项目周报'},
+  'meta':    {format:'周期：{period} ｜ 生成日期：{today}'},
+  'heading': {title:'章节标题'},
+  'overview':{placeholder:'overview'},
+  'kpi':     {keys:['total','done','completion_rate']},
+  'stats_table':{},
+  'status':  {},
+  'risk_list':{},
+  'plan':    {},
+  'custom':  {content:'自定义内容', is_html:false},
+};
+
+async function loadTemplate(){
+  const d = await (await fetch('/api/template')).json();
+  tplModules = d.modules || [];
+  tplKpiOptions = d.kpi_options || [];
+  if(d.format === 'blocks' && d.blocks && d.blocks.length){
+    tplBlocks = d.blocks.map((b,i)=>({...b, _id:'b'+Date.now()+'_'+i}));
+  } else {
+    tplBlocks = (d.default_blocks||[]).map((b,i)=>({...b, _id:'b'+Date.now()+'_'+i}));
+  }
+  renderModuleLib();
+  renderCanvas();
+}
+function useDefaultTemplate(){
+  fetch('/api/template').then(r=>r.json()).then(d=>{
+    tplBlocks = (d.default_blocks||[]).map((b,i)=>({...b,_id:'b'+Date.now()+'_'+i}));
+    renderCanvas();
+    $('templateMsg').className='msg ok'; $('templateMsg').textContent='已载入默认模板blocks';
+  });
+}
+function renderModuleLib(){
+  $('moduleLib').innerHTML = tplModules.map(m=>
+    `<div draggable="true" ondragstart="libDrag(event,'${m.type}')"
+       style="border:1px solid var(--border);border-radius:6px;padding:8px 10px;margin-bottom:6px;cursor:grab;background:#fff;font-size:12px;">
+       <div style="font-weight:600;">${m.icon} ${m.label}</div>
+       <div style="font-size:11px;color:var(--muted)">${m.desc}</div></div>`).join('');
+}
+function libDrag(ev, type){ ev.dataTransfer.setData('text/block-type', type); }
+
+function renderCanvas(){
+  const box=$('templateCanvas');
+  if(!tplBlocks.length){ box.innerHTML='<div style="text-align:center;color:var(--muted);padding:40px;font-size:13px;">从左侧模块库拖入模块，或点击"默认"载入</div>'; return; }
+  box.innerHTML = tplBlocks.map((b,i)=>blockHtml(b,i)).join('');
+  // 绑定 canvas 内拖动
+  box.querySelectorAll('.tpl-block').forEach(el=>{
+    el.addEventListener('dragover', e=>e.preventDefault());
+    el.addEventListener('drop', e=>{
+      e.preventDefault();
+      const type = e.dataTransfer.getData('text/block-type');
+      const from = parseInt(el.dataset.idx);
+      if(type){ // 从库拖入，插到当前块前
+        addBlockAt(type, from);
+      } else {
+        const fromId = e.dataTransfer.getData('text/block-from');
+        if(fromId!=null) moveBlock(parseInt(fromId), from);
+      }
+    });
+  });
+}
+function blockHtml(b,i){
+  const label = (tplModules.find(m=>m.type===b.type)||{}).label || b.type;
+  return `<div class="tpl-block" draggable="true" data-idx="${i}"
+    ondragstart="tplDrag(event,${i})"
+    ondragover="event.preventDefault()"
+    style="border:1px solid var(--border);border-radius:6px;margin-bottom:8px;padding:8px;background:#fff;">
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;cursor:grab;">
+      <span style="font-size:12px;font-weight:600;color:var(--primary)">⋮⋮ ${label}</span>
+      <span>
+        <button class="btn btn-outline btn-sm" style="font-size:11px;padding:3px 8px" onclick="moveBlock(${i},${i-1})">↑</button>
+        <button class="btn btn-outline btn-sm" style="font-size:11px;padding:3px 8px" onclick="moveBlock(${i},${i+1})">↓</button>
+        <button class="btn btn-danger btn-sm" style="font-size:11px;padding:3px 8px" onclick="removeBlock(${i})">✕</button>
+      </span>
+    </div>
+    ${blockEditorHtml(b,i)}
+  </div>`;
+}
+function tplDrag(ev, i){ ev.dataTransfer.setData('text/block-from', String(i)); }
+
+function blockEditorHtml(b,i){
+  switch(b.type){
+    case 'title':
+    case 'heading':
+      return `<div class="field"><label>标题</label><input type="text" value="${esc(b.title||'')}" onchange="updBlock(${i},'title',this.value)"></div>`;
+    case 'meta':
+      return `<div class="field"><label>格式（含{period}{today}占位）</label><input type="text" value="${esc(b.format||'周期：{period}')}" onchange="updBlock(${i},'format',this.value)"></div>`;
+    case 'overview':
+      return `<div class="field"><label>显示内容</label><select onchange="updBlock(${i},'placeholder',this.value)">
+        <option value="overview" ${b.placeholder!=='next_plan'?'selected':''}>进展综述</option>
+        <option value="next_plan" ${b.placeholder==='next_plan'?'selected':''}>下周计划</option></select></div>`;
+    case 'kpi':
+      return `<div class="field"><label>KPI 字段（勾选显示）</label><div style="display:flex;flex-wrap:wrap;gap:6px;">
+        ${tplKpiOptions.map(o=>`<label style="font-size:12px;display:flex;gap:3px;align-items:center">
+          <input type="checkbox" ${(b.keys||[]).includes(o.key)?'checked':''} onchange="toggKpi(${i},'${o.key}',this.checked)">${o.label}</label>`).join('')}</div></div>`;
+    case 'custom':
+      return `<div class="field"><label>内容</label><textarea rows="2" style="width:100%" onchange="updBlock(${i},'content',this.value)">${esc(b.content||'')}</textarea>
+        <label style="font-size:12px;display:flex;gap:3px;align-items:center;margin-top:4px"><input type="checkbox" ${b.is_html?'checked':''} onchange="updBlock(${i},'is_html',this.checked)">作为 HTML</label></div>`;
+    default:
+      return `<div style="font-size:12px;color:var(--muted)">数据自动绑定当前统计</div>`;
+  }
+}
+function updBlock(i,key,val){ tplBlocks[i][key]=val; }
+function toggKpi(i,key,ch){ tplBlocks[i].keys = tplBlocks[i].keys||[]; if(ch){ if(!tplBlocks[i].keys.includes(key)) tplBlocks[i].keys.push(key);} else tplBlocks[i].keys=tplBlocks[i].keys.filter(k=>k!==key); }
+function addBlockAt(type, idx){ const b={type, ...JSON.parse(JSON.stringify(MODULE_DEFAULTS[type]||{})), _id:'b'+Date.now()+Math.floor(Math.random()*1000)}; tplBlocks.splice(idx,0,b); renderCanvas(); }
+function removeBlock(i){ tplBlocks.splice(i,1); renderCanvas(); }
+function moveBlock(from,to){ if(to<0||to>=tplBlocks.length||from===to)return; const [b]=tplBlocks.splice(from,1); tplBlocks.splice(to,0,b); renderCanvas(); }
+
+async function saveTemplateBlocks(){
+  if(!tplBlocks.length){alert('画布为空');return;}
+  const clean = tplBlocks.map(({_id, ...b})=>b);
+  const res = await fetch('/api/template',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({format:'blocks', blocks:clean})});
+  $('templateMsg').className = res.ok?'msg ok':'msg err';
+  $('templateMsg').textContent = res.ok?'模板已保存（后续自动延用）':'保存失败';
+}
+async function resetTemplate(){
+  if(!confirm('恢复默认模板？')) return;
+  await fetch('/api/template/reset',{method:'POST'});
+  useDefaultTemplate();
+  $('templateMsg').className='msg ok'; $('templateMsg').textContent='已恢复默认';
+}
+async function parseTemplate(){
+  const inp=$('templateFile'); if(!inp.files.length){alert('请先选择模板文件');return;}
+  const fd=new FormData(); fd.append('file',inp.files[0]);
+  const res=await fetch('/api/template/parse',{method:'POST',body:fd});
+  const d=await res.json();
+  if(d.ok){
+    // AI 解析返回 HTML -> 放入一个 custom 块
+    tplBlocks = [{type:'custom', content:d.html, is_html:true, _id:'b'+Date.now()}];
+    renderCanvas();
+    $('templateMsg').className='msg ok'; $('templateMsg').textContent='已用 AI 解析为 HTML 自定义块，可编辑保存';
+  } else {
+    $('templateMsg').className='msg err';
+    $('templateMsg').textContent=(d.error||'解析失败')+'（已填入自定义块原文）';
+    if(d.source_text){ tplBlocks=[{type:'custom',content:d.source_text,is_html:false,_id:'b'+Date.now()}]; renderCanvas(); }
+  }
+}
+
+// ============ 周报 ============
+async function generateReport(){
+  $('genMsg').className=''; $('genMsg').textContent='生成中...';
+  // 先保存当前画布 blocks（若有），generate 依赖后端自动加载已存模板
+  if(tplBlocks && tplBlocks.length){
+    const clean = tplBlocks.map(({_id,...b})=>b);
+    await fetch('/api/template',{method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({format:'blocks', blocks:clean})});
+  }
+  let fd=new FormData();
+  fd.append('project_name',$('genProject').value);
+  fd.append('period',$('genPeriod').value);
+  fd.append('use_ai',$('genUseAI').checked);
+  // 当前选中的 sheet 或分组
+  const cur=state.current;
+  if(cur && cur.startsWith('sheet:')) fd.append('sheet_ids',cur.split(':')[1]);
+  else if(cur && cur.startsWith('group:')){
+    const gid=cur.split(':')[1];
+    const g=state.groups[gid];
+    if(g&&g.sheets) fd.append('sheet_ids',g.sheets.join(','));
+  }
+  try{
+    const res=await fetch('/api/generate',{method:'POST',body:fd});
+    const d=await res.json();
+    if(!res.ok) throw new Error(JSON.stringify(d));
+    const g1=d.generated[0];
+    state.lastReport=g1;
+    $('reportBox').innerHTML=g1.report;
+    $('exportRow').style.display='flex';
+    $('genMsg').className=g1.ai_error?'msg err':'msg ok';
+    $('genMsg').textContent=g1.ai_error?('AI未生效（'+g1.ai_error+'）已用规则文案'): (g1.ai_used?'已用 AI 生成（汇总'+g1.n_sheets+'个sheet）':'已用规则引擎生成（汇总'+g1.n_sheets+'个sheet）');
+  }catch(e){ $('genMsg').className='msg err'; $('genMsg').textContent='生成失败:'+e.message; }
+}
+async function exportReport(format){
+  if(!state.lastReport){alert('请先生成周报');return;}
+  const body=JSON.stringify({report_html:state.lastReport.report, format, filename: state.lastReport.project||'周报'});
+  const res=await fetch('/api/export',{method:'POST',headers:{'Content-Type':'application/json'},body});
+  const blob=await res.blob();
+  const ext=format==='word'?'.docx':'.txt';
+  const a=document.createElement('a'); const url=URL.createObjectURL(blob);
+  a.href=url; a.download=((state.lastReport.project||'周报')+ext); a.click(); URL.revokeObjectURL(url);
+}
+async function saveToHistory(){
+  if(!state.lastReport){alert('先生成周报');return;}
+  const ts=new Date(); const pad=n=>String(n).padStart(2,'0');
+  const name=`${ts.getFullYear()}${pad(ts.getMonth()+1)}${pad(ts.getDate())}_${pad(ts.getHours())}${pad(ts.getMinutes())}_${(state.lastReport.project||'周报')}.html`;
+  await fetch('/api/save_report',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({filename:name,content:state.lastReport.report})});
+  alert('已存入历史');
+  loadHistory();
+}
+async function loadHistory(){
+  const d=await(await fetch('/api/history')).json();
+  $('historyList').innerHTML=d.items.map(it=>
+    `<li><span>📄 ${esc(it.name)}</span>
+      <span style="display:flex;gap:8px;align-items:center"><span style="font-size:11px;color:var(--muted)">${it.mtime}</span>
+      <button class="btn btn-outline btn-sm" onclick="viewHistory('${it.name}')" style="font-size:11px;padding:4px 10px">查看</button></span></li>`).join('')||'<li style="color:var(--muted)">暂无历史</li>';
+}
+async function viewHistory(name){
+  const t=await(await fetch('/api/history/'+name)).text();
+  $('reportBox').innerHTML=t.includes('<')?t:('<pre>'+esc(t)+'</pre>');
+}
+
+// ============ 初始化 ============
+document.querySelectorAll('.tab').forEach(t=>t.addEventListener('click',()=>{
+  document.querySelectorAll('.tab').forEach(x=>x.classList.remove('active'));
+  document.querySelectorAll('.panel').forEach(x=>x.classList.remove('active'));
+  t.classList.add('active'); $('panel-'+t.dataset.tab).classList.add('active');
+  if(t.dataset.tab==='report') loadHistory();
+  if(t.dataset.tab==='rules') loadRules();
+  if(t.dataset.tab==='template') loadTemplate();
+}));
+loadRules(); loadTemplate();
+</script>
+</body>
+</html>
