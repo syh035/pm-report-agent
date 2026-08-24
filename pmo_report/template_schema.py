@@ -38,6 +38,7 @@ MODULE_LIBRARY: List[Dict] = [
     {"type": "status", "label": "完成情况", "desc": "已完成/进行中/未开始", "icon": "✓"},
     {"type": "risk_list", "label": "风险清单", "desc": "风险与关注(带颜色)", "icon": "⚠"},
     {"type": "plan",   "label": "下周计划", "desc": "下周计划段落", "icon": "→"},
+    {"type": "delta",  "label": "环比上周", "desc": "与上周对比（完成率/风险/滞后）", "icon": "⇄"},
     {"type": "custom", "label": "自定义块", "desc": "自由 HTML/文本", "icon": "+"},
 ]
 

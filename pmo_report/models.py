@@ -33,6 +33,8 @@ class Task:
     progress: Optional[float] = None  # 当前进度 0-100
     status: str = ""                  # 原始状态文本（未归一化时保留）
     note: str = ""                    # 备注 / 详情
+    depends_on: str = ""              # 依赖的任务名（风险传递用，可空）
+    slow_ok: bool = False             # 用户标记：该任务进度偏慢属正常，不再标红
 
     def to_dict(self) -> Dict:
         d = asdict(self)

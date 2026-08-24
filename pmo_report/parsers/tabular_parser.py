@@ -17,14 +17,21 @@ from ._date_util import parse_date
 
 # 列名 → 字段 的别名映射（大小写、常见中文名）
 COLUMN_ALIASES = {
-    "name":    ["任务", "任务名称", "事项", "交付物", "子任务", "name", "task", "item", "内容", "模块", "工作项", "名称"],
-    "owner":   ["负责人", "责任单位", "单位", "归属", "owner", "assignee", "责任人", "团队", "部门"],
-    "plan_start": ["计划开始", "计划起始", "开始日期", "计划开始时间", "start", "plan_start", "planned_start"],
-    "plan_end":   ["计划完成", "计划结束", "结束日期", "计划完成时间", "due", "plan_end", "planned_end", "计划交付", "目标时间"],
-    "actual_end": ["实际完成", "实际结束", "完成日期", "actual_end", "完成时间", "实际上线"],
-    "progress":   ["进度", "当前进度", "完成率", "progress", "percent", "pct", "状态进度"],
-    "status":     ["状态", "status", "当前状态", "阶段"],
-    "note":       ["备注", "说明", "note", "备注说明", "detail", "详情"],
+    "name":    ["任务", "任务名称", "事项", "交付物", "子任务", "name", "task", "item", "内容", "模块", "工作项", "名称",
+                "任务项", "工作内容", "工作事项", "工作", "里程碑"],
+    "owner":   ["负责人", "责任单位", "单位", "归属", "owner", "assignee", "责任人", "团队", "部门",
+                "责任部门", "负责人/单位", "负责人单位", "承办人", "执行人", "负责部门"],
+    "plan_start": ["计划开始", "计划起始", "开始日期", "计划开始时间", "计划开始日期", "start", "plan_start",
+                   "planned_start", "开始时间", "start_date", "开工日期", "预计开始"],
+    "plan_end":   ["计划完成", "计划结束", "结束日期", "计划完成时间", "计划完成日期", "due", "plan_end",
+                   "planned_end", "计划交付", "目标时间", "截止", "截止日期", "deadline", "end", "结束时间",
+                   "完成日期", "交付日期", "预计完成"],
+    "actual_end": ["实际完成", "实际结束", "完成日期", "actual_end", "完成时间", "实际上线", "实际交付",
+                   "actual_end_date", "实际完成日期"],
+    "progress":   ["进度", "当前进度", "完成率", "progress", "percent", "pct", "状态进度",
+                   "完成进度", "进度百分比", "进度%", "progress_pct", "当前完成率", "完成率%"],
+    "status":     ["状态", "status", "当前状态", "阶段", "任务状态", "进展"],
+    "note":       ["备注", "说明", "note", "备注说明", "detail", "详情", "备注信息", "补充说明", "描述"],
 }
 
 
@@ -66,7 +73,11 @@ def _row_to_task(row: pd.Series, mapping: Dict[str, str]) -> Task:
     prog = get("progress")
     if prog is not None and str(prog).replace("%", "").strip().replace(".", "").isdigit():
         try:
-            t.progress = float(str(prog).replace("%", "").strip())
+            v = float(str(prog).replace("%", "").strip())
+            # 0 < 进度 ≤ 1 视为小数比例（如 0.5 = 50%），自动放大；1 和 0 保持原义
+            if 0 < v < 1:
+                v *= 100
+            t.progress = v
         except ValueError:
             t.progress = None
 
