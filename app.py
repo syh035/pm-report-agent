@@ -69,10 +69,12 @@ def _load_stats_history() -> List[Dict]:
         return []
 
 
-def _append_stats_history(name: str, stats_dict: Dict) -> None:
-    """把一次周报统计写入历史（最多 50 条）。"""
+def _append_stats_history(project_name: str, file_name: str, stats_dict: Dict) -> None:
+    """把一次周报统计写入历史（最多 50 条）。
+    project 用于环比匹配（按项目名），file 用于与历史文件对应。"""
     h = _load_stats_history()
-    h.insert(0, {"time": datetime.now().strftime("%Y-%m-%d %H:%M"), "name": name, "stats": stats_dict})
+    h.insert(0, {"time": datetime.now().strftime("%Y-%m-%d %H:%M"),
+                 "project": project_name, "file": file_name, "stats": stats_dict})
     h = h[:50]
     try:
         with open(STATS_HISTORY_FILE, "w", encoding="utf-8") as f:
@@ -86,8 +88,16 @@ _SUMMARY_KEYS = ("total", "done", "in_progress", "not_started", "delayed", "risk
 
 
 def _compact_stats(stats_dict: Dict) -> Dict:
-    """只保留汇总数字字段，供环比使用（不存任务明细）。"""
-    return {k: stats_dict.get(k) for k in _SUMMARY_KEYS if k in stats_dict}
+    """只保留汇总数字 + 每任务进度快照，供环比使用（不存完整任务明细）。
+    tasks_progress 用于「连续两周无进展」与「同任务集合完成率」对比。"""
+    out = {k: stats_dict.get(k) for k in _SUMMARY_KEYS if k in stats_dict}
+    tp = {}
+    for t in stats_dict.get("tasks") or []:
+        if t.get("progress") is not None:
+            tp[t.get("name", "")] = t.get("progress")
+    if tp:
+        out["tasks_progress"] = tp
+    return out
 
 
 def _latest_prev_stats(name: str = "") -> Optional[Dict]:
@@ -97,13 +107,13 @@ def _latest_prev_stats(name: str = "") -> Optional[Dict]:
         return None
     h = _load_stats_history()
     for e in h:
-        if e.get("name") == name:
+        if e.get("project") == name:
             return e.get("stats")
     return None
 
 ALLOWED_EXTS = {".xlsx", ".xlsm", ".csv", ".docx", ".pdf"}
 
-app = FastAPI(title="PM Report Agent", version="0.7.0")
+app = FastAPI(title="PM Report Agent", version="0.9.0")
 
 
 # ================= 工作区状态 =================
@@ -190,6 +200,10 @@ class RulesIn(BaseModel):
     color_risk: Optional[str] = "#C0504D"
     color_warning: Optional[str] = "#E65100"
     color_normal: Optional[str] = "#2E7D32"
+    # 路线C：可编辑规则库
+    ignore_keywords: Optional[List[str]] = None
+    column_aliases: Optional[Dict[str, str]] = None
+    status_words: Optional[Dict[str, str]] = None
 
 
 class RenameIn(BaseModel):
@@ -270,21 +284,28 @@ async def workspace_load(files: List[UploadFile] = File(...)):
     created = []
     for uf in files:
         tmp = _save_upload_to_tmp(uf)
+        ext = os.path.splitext(uf.filename or "")[1].lower()
         try:
-            proj = parse_file(tmp, period="")
+            if ext in (".xlsx", ".xlsm"):
+                # Excel 多 sheet：每个工作表生成一个独立 sheet 对象
+                from pmo_report.parsers import tabular_parser
+                sheet_projects = tabular_parser.parse_excel_all(tmp)
+            else:
+                sheet_projects = [(os.path.splitext(uf.filename or "")[0], parse_file(tmp, period=""))]
         except Exception as e:
             raise HTTPException(500, f"解析 {uf.filename} 失败: {e}")
         finally:
             os.path.exists(tmp) and os.remove(tmp)
-        sid = _next_sid()
-        stats = analyze(proj, rules=load_rules())
-        WORKSPACE["sheets"][sid] = {
-            "name": proj.name or os.path.splitext(uf.filename or "")[0],
-            "source": uf.filename or "",
-            "project": proj,
-            "_stats": stats.to_dict(),
-        }
-        created.append(sid)
+        for name, proj in sheet_projects:
+            sid = _next_sid()
+            stats = analyze(proj, rules=load_rules())
+            WORKSPACE["sheets"][sid] = {
+                "name": proj.name or name,
+                "source": uf.filename or "",
+                "project": proj,
+                "_stats": stats.to_dict(),
+            }
+            created.append(sid)
     return {"ok": True, "created": created, "workspace": _workspace_view()}
 
 
@@ -360,6 +381,11 @@ def update_sheet_tasks(sid: str, payload: TaskUpdateIn):
             t.progress = None if p in (None, "") else float(p)
         except (TypeError, ValueError):
             t.progress = None
+        w = item.get("weight")
+        try:
+            t.weight = float(w) if w not in (None, "") else 1.0
+        except (TypeError, ValueError):
+            t.weight = 1.0
         if t.name:
             new_tasks.append(t)
     proj.tasks = new_tasks
@@ -390,6 +416,7 @@ def export_tasks(payload: ExportTasksIn):
                 "计划完成": d.get("plan_end", ""),
                 "实际完成": d.get("actual_end", ""),
                 "依赖任务": d.get("depends_on", ""),
+                "权重": d.get("weight", 1),
                 "偏慢豁免": "是" if d.get("slow_ok") else "",
                 "备注": d.get("note", ""),
             })
@@ -421,6 +448,34 @@ def reset_rules():
     rules = rules_mod.reset_rules()
     _recompute_all()
     return {"ok": True, "rules": rules, "note": "已恢复默认（旧规则已归档到历史）"}
+
+
+class RulesLearnIn(BaseModel):
+    ignore_names: List[str] = []      # 校对删除的任务名 → 忽略词
+    status_maps: Dict[str, str] = {}  # 校对修正的状态变体 → 标准状态
+
+
+@app.post("/api/rules/learn")
+def learn_rules(payload: RulesLearnIn):
+    """校对回写（路线C）：把用户在校对页的修正学习进规则库，本地持久化，越用越准。"""
+    rules = rules_mod.load_rules()
+    learned = {"ignore": [], "status": []}
+    ignore = rules.setdefault("ignore_keywords", [])
+    for name in payload.ignore_names:
+        n = (name or "").strip()
+        if n and n not in ignore:
+            ignore.append(n)
+            learned["ignore"].append(n)
+    status = rules.setdefault("status_words", {})
+    for src, dst in (payload.status_maps or {}).items():
+        s, d = (src or "").strip(), (dst or "").strip()
+        if s and d and d in rules_mod.STATUS_VALUES and status.get(s) != d:
+            status[s] = d
+            learned["status"].append(f"{s}→{d}")
+    if learned["ignore"] or learned["status"]:
+        rules_mod.save_rules(rules)
+    return {"ok": True, "learned": learned,
+            "note": f"已学习忽略词 {len(learned['ignore'])} 条、状态词 {len(learned['status'])} 条（本地生效）"}
 
 
 @app.get("/api/rules/history")
@@ -481,7 +536,8 @@ def clear_token_usage():
 @app.get("/api/template")
 def get_template():
     from pmo_report import report as report_mod
-    from pmo_report.template_schema import DEFAULT_BLOCKS, MODULE_LIBRARY, KPI_OPTIONS
+    from pmo_report.template_schema import (DEFAULT_BLOCKS, MODULE_LIBRARY, KPI_OPTIONS,
+                                            PRESET_TEMPLATES)
     gen = ReportGenerator()
     custom = gen.load_custom_template()
     blocks = gen.load_blocks_template()
@@ -492,6 +548,7 @@ def get_template():
             "default_blocks": DEFAULT_BLOCKS,
             "modules": MODULE_LIBRARY,
             "kpi_options": KPI_OPTIONS,
+            "presets": PRESET_TEMPLATES,
             "html": "",
             "is_custom": True,
         }
@@ -501,6 +558,7 @@ def get_template():
         "default_blocks": DEFAULT_BLOCKS,
         "modules": MODULE_LIBRARY,
         "kpi_options": KPI_OPTIONS,
+        "presets": PRESET_TEMPLATES,
         "html": custom or report_mod.DEFAULT_TEMPLATE,
         "is_custom": bool(custom),
     }
@@ -604,9 +662,32 @@ async def generate(
         proj = sh["project"]
         stats_list.append(analyze(proj, rules=rules))
 
-    # 多 sheet：生成一组合并统计
-    merged = _merge_stats(stats_list, name=project_name or "项目汇总", period=period)
+    # 多 sheet：生成一组合并统计（含任务去重）
+    merged = _merge_stats(stats_list, name=project_name or "项目汇总", period=period, rules=rules)
     prev = _latest_prev_stats(merged.project.name)   # 环比基准（上一期统计）
+    if prev:
+        # 环比增强①：连续两周无进展的任务（进度未变且未完成）
+        prev_tp = prev.get("tasks_progress") or {}
+        no_progress = [
+            ts.task.name for ts in merged.task_stats
+            if (ts.task.progress is not None and prev_tp.get(ts.task.name) is not None
+                and abs(prev_tp.get(ts.task.name, 0) - ts.task.progress) < 0.5
+                and ts.task.progress < 100)
+        ]
+        # 环比增强②：只对比两周都存在的任务集合，剔除集合变化影响
+        cur_tp = {ts.task.name: ts.task.progress for ts in merged.task_stats}
+        overlap = [n for n in cur_tp if n in prev_tp]
+        prev = dict(prev)
+        if no_progress:
+            prev["no_progress"] = no_progress[:10]
+        if len(overlap) >= 3:
+            prev_done = sum(1 for n in overlap if (prev_tp[n] or 0) >= 100)
+            cur_done = sum(1 for n in overlap if (cur_tp[n] or 0) >= 100)
+            prev["overlap_rate"] = {
+                "prev": round(prev_done / len(overlap) * 100, 1),
+                "cur": round(cur_done / len(overlap) * 100, 1),
+                "n": len(overlap),
+            }
     tokens_before = ai_mod.usage_summary()
     result = gen.render(merged, use_ai=use_ai, rules=rules, prev_stats=prev)
     tokens_after = ai_mod.usage_summary()
@@ -631,37 +712,40 @@ async def generate(
     return {"generated": generated}
 
 
-def _merge_stats(stats_list, name="项目汇总", period=""):
-    """把多个 ProjectStats 合并为一个（用于分组/全工作区汇总周报）。
-    完成率/平均进度按任务数加权，避免大小表权重失衡。"""
-    from pmo_report.engine import ProjectStats
-    from pmo_report.models import Project
-    total_tasks = sum(s.total_tasks for s in stats_list)
-    done = sum(s.done_count for s in stats_list)
-    in_prog = sum(s.in_progress_count for s in stats_list)
-    not_started = sum(s.not_started_count for s in stats_list)
-    delayed = sum(s.delayed_count for s in stats_list)
-    weighted = [(s.completion_rate, s.total_tasks, s.avg_progress) for s in stats_list if s.total_tasks]
-    targets = [s.avg_target_progress for s in stats_list if s.avg_target_progress is not None]
-    risk = sum(s.risk_count for s in stats_list)
+def _task_completeness(t: Task) -> int:
+    """任务信息完整度（去重时保留信息更全的一份）。"""
+    return sum(1 for v in (t.name, t.owner, t.progress, t.plan_start, t.plan_end, t.note) if v)
 
-    stats = ProjectStats(project=Project(name=name, period=period))
-    stats.total_tasks = total_tasks
-    stats.done_count = done
-    stats.in_progress_count = in_prog
-    stats.not_started_count = not_started
-    stats.delayed_count = delayed
-    stats.risk_count = risk
-    w_sum = sum(w for _, w, _ in weighted)
-    stats.completion_rate = round(sum(r * w for r, w, _ in weighted) / w_sum, 1) if w_sum else 0
-    stats.avg_progress = round(sum(p * w for _, w, p in weighted) / w_sum, 1) if w_sum else 0
-    stats.avg_target_progress = round(sum(targets) / len(targets), 1) if targets else None
-    # 收集所有 task_stat
-    all_ts = []
+
+def _dedupe_tasks(tasks: List[Task]) -> List[Task]:
+    """跨资料去重：同一任务（名称+负责人相同）只保留一份（信息最全者）。
+    解决同一任务出现在「进度表 + 周会纪要」等多份资料中被重复计数的问题。"""
+    best: Dict = {}
+    for t in tasks:
+        key = (t.name, t.owner)
+        if key not in best or _task_completeness(t) > _task_completeness(best[key]):
+            best[key] = t
+    return list(best.values())
+
+
+def _merge_stats(stats_list, name="项目汇总", period="", rules: Optional[Dict] = None):
+    """把多个 ProjectStats 合并为一个（用于分组/全工作区汇总周报）。
+    - 任务先去重（名称+负责人），再统一按 analyze 重新统计
+    - 完成率/平均进度支持任务权重，避免大小表权重失衡与重复计数"""
+    from pmo_report.engine import analyze as _analyze
+    from pmo_report.models import Project
+    from copy import deepcopy
+    all_tasks: List[Task] = []
+    seen_keys = set()
     for s in stats_list:
-        all_ts.extend(s.task_stats)
-    stats.task_stats = all_ts
-    return stats
+        for t in s.project.tasks:
+            key = (t.name, t.owner)
+            if key not in seen_keys:
+                seen_keys.add(key)
+                all_tasks.append(t)
+    all_tasks = _dedupe_tasks(all_tasks)
+    merged_proj = Project(name=name, period=period, tasks=all_tasks)
+    return _analyze(merged_proj, rules=rules)
 
 
 # ================= 导出 =================
@@ -691,10 +775,16 @@ def export(payload: ExporterIn):
 
 
 # ================= 历史 =================
+def _history_stats_names() -> set:
+    """有统计快照（可环比）的历史文件名集合。"""
+    return {e.get("file", "") for e in _load_stats_history()}
+
+
 @app.get("/api/history")
 def list_history():
     if not os.path.isdir(HISTORY_DIR):
         return {"items": []}
+    stats_names = _history_stats_names()
     items = []
     for fn in sorted(os.listdir(HISTORY_DIR)):
         if fn.endswith((".md", ".html", ".txt")):
@@ -703,6 +793,7 @@ def list_history():
                 "name": fn,
                 "size": os.path.getsize(full),
                 "mtime": datetime.fromtimestamp(os.path.getmtime(full)).strftime("%Y-%m-%d %H:%M"),
+                "has_stats": fn in stats_names,   # 环比徽标
             })
     items.reverse()
     return {"items": items}
@@ -718,6 +809,69 @@ def view_history(name: str):
         return PlainTextResponse(f.read())
 
 
+@app.post("/api/history/{name}/delete")
+def delete_history(name: str):
+    """删除历史周报（连同其环比统计快照）。"""
+    safe = os.path.basename(name)
+    full = os.path.join(HISTORY_DIR, safe)
+    if os.path.exists(full):
+        os.remove(full)
+    h = _load_stats_history()
+    h = [e for e in h if e.get("file") != safe]
+    try:
+        with open(STATS_HISTORY_FILE, "w", encoding="utf-8") as f:
+            json.dump(h, f, ensure_ascii=False, indent=2)
+    except Exception:
+        pass
+    return {"ok": True}
+
+
+class RenameHistoryIn(BaseModel):
+    new_name: str
+
+
+@app.post("/api/history/{name}/rename")
+def rename_history(name: str, payload: RenameHistoryIn):
+    """重命名历史周报（同步更新环比快照的 file 标识）。"""
+    safe = os.path.basename(name)
+    new_name = os.path.basename((payload.new_name or "").strip())
+    if not new_name or new_name == safe:
+        raise HTTPException(400, "新名称无效")
+    old_full = os.path.join(HISTORY_DIR, safe)
+    if not os.path.exists(old_full):
+        raise HTTPException(404, "历史周报不存在")
+    new_full = os.path.join(HISTORY_DIR, new_name)
+    os.rename(old_full, new_full)
+    h = _load_stats_history()
+    for e in h:
+        if e.get("file") == safe:
+            e["file"] = new_name
+    try:
+        with open(STATS_HISTORY_FILE, "w", encoding="utf-8") as f:
+            json.dump(h, f, ensure_ascii=False, indent=2)
+    except Exception:
+        pass
+    return {"ok": True, "name": new_name}
+
+
+@app.get("/api/settings/trend")
+def get_trend():
+    """历史统计趋势（供面板画完成率/风险折线）。"""
+    h = _load_stats_history()
+    series = []
+    for e in h[:20]:
+        s = e.get("stats") or {}
+        series.append({
+            "time": e.get("time", ""),
+            "name": e.get("project") or e.get("file", ""),
+            "completion_rate": s.get("completion_rate"),
+            "avg_progress": s.get("avg_progress"),
+            "risk": s.get("risk"),
+            "delayed": s.get("delayed"),
+        })
+    return {"series": series}
+
+
 @app.post("/api/save_report")
 def api_save_report(payload: SaveReportIn):
     if not payload.content.strip():
@@ -725,7 +879,8 @@ def api_save_report(payload: SaveReportIn):
     safe = os.path.basename(payload.filename)
     with open(os.path.join(HISTORY_DIR, safe), "w", encoding="utf-8") as f:
         f.write(payload.content)
-    # 写入环比历史（只存汇总数字，不存任务明细）
+    # 写入环比历史（只存汇总数字+任务进度快照；project 供环比匹配）
     if payload.stats:
-        _append_stats_history(safe, _compact_stats(payload.stats))
+        proj = (payload.stats.get("project_name") or safe).strip()
+        _append_stats_history(proj, safe, _compact_stats(payload.stats))
     return {"ok": True, "name": safe}

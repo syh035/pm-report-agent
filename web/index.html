@@ -68,13 +68,37 @@
   .history-list{list-style:none;} .history-list li{display:flex;justify-content:space-between;align-items:center;padding:7px;border-bottom:1px solid var(--border);font-size:13px;}
   .filters{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:10px;} .filters select,.filters input{border:1px solid var(--border);border-radius:5px;padding:5px 8px;font-size:12px;}
   .color-dot{display:inline-block;width:16px;height:16px;border-radius:4px;vertical-align:middle;border:1px solid #ccc;}
+  /* 深色模式（body.dark 覆盖 CSS 变量） */
+  body.dark{--primary:#6B8AFF;--primary-dark:#5A76E8;--bg:#17181F;--card:#20222B;--border:#34374A;--text:#E8EAF2;--muted:#9AA0B5;}
+  body.dark .tree-item:hover{background:#2A2D3A;} body.dark .group-head:hover{background:#262936;}
+  body.dark .dropzone{background:#1B1D26;} body.dark th{background:#1B1D26;}
+  body.dark tr:hover td{background:#262936;} body.dark .report-content{background:#20222B;}
+  body.dark #moduleLib,body.dark #templatePreview{background:#1B1D26;}
+  /* 表格固定表头 + 限高滚动 */
+  .view-table-wrap{max-height:480px;overflow:auto;}
+  .view-table-wrap th{position:sticky;top:0;z-index:1;}
+  /* 打印友好：只输出当前周报 */
+  @media print{
+    .topbar,.sidebar,.tabs,.btn,.dropzone,.filters,#onboard,#exportRow,#healthBox,#taskEditBox{display:none !important;}
+    .layout{display:block;height:auto;} .main{overflow:visible;padding:0;}
+    .panel{display:block !important;} .card{border:none;padding:0;margin:0;}
+    .report-content{border:none;padding:0;}
+  }
 </style>
 </head>
 <body>
 
 <div class="topbar">
   <div><h1>PM Report Agent</h1><div class="sub">AI 项目管理智能周报 · 数据 → 统计 → 周报</div></div>
-  <button class="btn btn-primary" style="background:rgba(255,255,255,.2)" onclick="openUpload()">上传资料</button>
+  <div class="row" style="gap:8px">
+    <button class="btn btn-primary" style="background:rgba(255,255,255,.2)" onclick="openUpload()">上传资料</button>
+    <button class="btn btn-primary" id="darkBtn" style="background:rgba(255,255,255,.2);font-size:14px;padding:5px 10px" onclick="toggleDark()" title="切换深色模式">🌙</button>
+  </div>
+</div>
+<div id="onboard" style="display:none;background:#EEF2FF;border-bottom:1px solid var(--border);padding:8px 24px;font-size:13px;">
+  使用三步：<b>① 上传资料</b> → <b>② 数据面板校对 / 体检</b> → <b>③ 模板 + 周报生成</b>。
+  <button class="btn btn-outline" style="font-size:12px;padding:2px 10px;margin-left:10px" onclick="dismissOnboard()">知道了</button>
+</div>
 </div>
 
 <div class="layout">
@@ -109,7 +133,7 @@
         <div id="taskEditBox" style="display:none;margin-bottom:12px;"></div>
         <div class="kpi-grid" id="viewKpis"></div>
         <div class="filters" id="viewFilters"></div>
-        <div style="overflow-x:auto;" id="viewTable"></div>
+        <div class="view-table-wrap" id="viewTable"></div>
       </div>
       <div class="card" id="emptyHint">
         <h2>尚无数据</h2>
@@ -146,7 +170,9 @@
           <input type="file" id="templateFile" accept=".docx,.pdf,.html,.md,.txt">
           <button class="btn btn-primary" onclick="parseTemplate()">上传模板并用 AI 解析</button>
           <button class="btn btn-outline" onclick="loadTemplate()">载入已存模板</button>
-          <button class="btn btn-outline" onclick="useDefaultTemplate()">载入默认</button>
+          <select id="presetSelect" style="padding:7px 8px;border:1px solid var(--border);border-radius:6px;font-size:13px;"></select>
+          <button class="btn btn-outline" onclick="loadPreset()">载入预置模板</button>
+          <button class="btn btn-primary" onclick="previewTemplate()">▶ 实时预览</button>
           <button class="btn btn-danger" onclick="resetTemplate()">恢复默认并清空</button>
           <button class="btn btn-primary" onclick="saveTemplateBlocks()">保存模板</button>
         </div>
@@ -168,6 +194,11 @@
 
     <!-- 周报面板 -->
     <div class="panel" id="panel-report">
+      <div class="card">
+        <h2>项目趋势（按已保存的历史统计）</h2>
+        <canvas id="trendCanvas" width="760" height="220" style="max-width:100%;"></canvas>
+        <div id="trendMsg" style="font-size:12px;color:var(--muted);"></div>
+      </div>
       <div class="card">
         <h2>生成周报</h2>
         <div class="row">
@@ -241,7 +272,7 @@
 <input type="file" id="uploadInput" multiple style="display:none" accept=".xlsx,.xlsm,.csv,.docx,.pdf">
 <script>
 const $ = id => document.getElementById(id);
-let state = { sheet:{}, groups:{}, rules:{}, current:'', lastReport:null, sortBy:'', sortAsc:true, filters:{}, editMode:false, editTasks:[] };
+let state = { sheet:{}, groups:{}, rules:{}, current:'', lastReport:null, sortBy:'', sortAsc:true, filters:{}, editMode:false, editTasks:[], ignoredNames:[] };
 
 // ============ 工具 ============
 function esc(s){ s=s==null?'':String(s); return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
@@ -344,12 +375,14 @@ function renderHealth(h){
   if(h.missing_plan_end && h.missing_plan_end.length) items.push(`<b>${h.missing_plan_end.length}</b> 个任务缺计划完成日期`);
   if(h.missing_plan_start && h.missing_plan_start.length) items.push(`<b>${h.missing_plan_start.length}</b> 个任务缺计划开始日期`);
   if(h.over_progress && h.over_progress.length) items.push(`<b>${h.over_progress.length}</b> 个任务进度超过 100%`);
+  if(h.date_inverted && h.date_inverted.length) items.push(`<b>${h.date_inverted.length}</b> 个任务日期倒挂（完成早于开始）`);
+  if(h.short_name && h.short_name.length) items.push(`<b>${h.short_name.length}</b> 个任务名过短（疑似乱码/占位）`);
   if(!items.length){ box.style.display='none'; badge.textContent='✅ 数据完整'; return; }
   badge.textContent = '⚠️ ' + items.join('，');
   const dump = (label, names) => names && names.length ? `<div style="margin-top:6px"><b>${label}：</b>${names.slice(0,8).map(esc).join('、')}${names.length>8?' 等':''}</div>` : '';
   box.style.display='block';
   box.className='card';
-  box.innerHTML = `<div style="font-size:13px;line-height:1.7;color:#9A6B00;">${items.join('；')}。可点「✏ 编辑任务」补充后重新统计。</div>${dump('缺进度',h.missing_progress)}${dump('缺负责人',h.missing_owner)}${dump('缺计划完成',h.missing_plan_end)}${dump('缺计划开始',h.missing_plan_start)}${dump('进度超100',h.over_progress)}`;
+  box.innerHTML = `<div style="font-size:13px;line-height:1.7;color:#9A6B00;">${items.join('；')}。可点「✏ 编辑任务」补充后重新统计。</div>${dump('缺进度',h.missing_progress)}${dump('缺负责人',h.missing_owner)}${dump('缺计划完成',h.missing_plan_end)}${dump('缺计划开始',h.missing_plan_start)}${dump('进度超100',h.over_progress)}${dump('日期倒挂',h.date_inverted)}${dump('任务名过短',h.short_name)}`;
 }
 
 // ============ 任务校对（编辑任务表） ============
@@ -373,13 +406,13 @@ function renderEditTable(tasks){
   state.editTasks = (tasks||[]).map(t=>({
     name:t.name||'', owner:t.owner||'', progress:t.progress, status:t.status||'',
     plan_start:t.plan_start||'', plan_end:t.plan_end||'', actual_end:t.actual_end||'',
-    depends_on:t.depends_on||'', slow_ok:!!t.slow_ok, note:t.note||''
+    depends_on:t.depends_on||'', slow_ok:!!t.slow_ok, note:t.note||'', weight:t.weight!=null?t.weight:1
   }));
   box.style.display='block';
   box.className='card';
-  box.innerHTML = `<div style="font-size:13px;font-weight:600;margin-bottom:8px;">任务校对（改完点「保存修改」，统计会自动重算；「偏慢豁免」勾选后该任务进度偏慢不再标红）</div>
+  box.innerHTML = `<div style="font-size:13px;font-weight:600;margin-bottom:8px;">任务校对（改完点「保存修改」，统计会自动重算；「偏慢豁免」勾选后该任务进度偏慢不再标红；「权重」影响完成率）</div>
     <div style="overflow-x:auto;"><table id="editTaskTable">
-      <tr><th>任务名称</th><th>负责人</th><th>进度%</th><th>状态</th><th>计划开始</th><th>计划完成</th><th>依赖任务</th><th>偏慢豁免</th><th>备注</th><th></th></tr>
+      <tr><th>任务名称</th><th>负责人</th><th>进度%</th><th>状态</th><th>计划开始</th><th>计划完成</th><th>依赖任务</th><th>权重</th><th>偏慢豁免</th><th>备注</th><th></th></tr>
     </table></div>
     <div class="row" style="margin-top:10px;">
       <button class="btn btn-primary" onclick="saveTasks()">保存修改</button>
@@ -401,6 +434,7 @@ function editRowHtml(t,i){
     <td><input type="date" value="${esc(t.plan_start||'')}" onchange="updTask(${i},'plan_start',this.value)"></td>
     <td><input type="date" value="${esc(t.plan_end||'')}" onchange="updTask(${i},'plan_end',this.value)"></td>
     <td><input style="width:110px" placeholder="依赖的任务名" value="${esc(t.depends_on)}" onchange="updTask(${i},'depends_on',this.value)"></td>
+    <td><input type="number" min="0.1" step="0.5" style="width:60px" value="${t.weight}" onchange="updTask(${i},'weight',this.value)" title="影响完成率/平均进度"></td>
     <td style="text-align:center"><input type="checkbox" ${t.slow_ok?'checked':''} onchange="updTask(${i},'slow_ok',this.checked)" title="勾选后该任务进度偏慢不再标红"></td>
     <td><input style="width:120px" value="${esc(t.note)}" onchange="updTask(${i},'note',this.value)"></td>
     <td><button class="btn btn-danger btn-sm" style="font-size:11px;padding:2px 8px" onclick="delTaskRow(${i})">✕</button></td>
@@ -408,18 +442,48 @@ function editRowHtml(t,i){
 }
 function updTask(i,key,val){ state.editTasks[i][key]=val; }
 function addTaskRow(){
-  state.editTasks.push({name:'',owner:'',progress:null,status:'',plan_start:'',plan_end:'',actual_end:'',depends_on:'',slow_ok:false,note:''});
+  state.editTasks.push({name:'',owner:'',progress:null,status:'',plan_start:'',plan_end:'',actual_end:'',depends_on:'',slow_ok:false,note:'',weight:1});
   const tb = $('editTaskTable');
   tb.insertAdjacentHTML('beforeend', editRowHtml(state.editTasks[state.editTasks.length-1], state.editTasks.length-1));
 }
-function delTaskRow(i){ state.editTasks.splice(i,1); renderEditTable(state.editTasks); }
+function delTaskRow(i){
+  const nm = (state.editTasks[i]||{}).name;
+  if(nm && !state.ignoredNames.includes(nm)) state.ignoredNames.push(nm);   // 记录待回写忽略词
+  state.editTasks.splice(i,1);
+  renderEditTable(state.editTasks);
+}
 async function saveTasks(){
   const sid = currentSheetId(); if(!sid) return;
   $('editMsg').textContent='保存中...';
+  const orig = (state.sheet[sid] && state.sheet[sid].tasks_full) || [];
+  // 状态词学习：原始状态是"非标准变体"且用户改成了标准状态 → 记录映射
+  const STD = ['已完成','进行中','未开始','已滞后','有风险'];
+  const statusLearn = {};
+  state.editTasks.forEach((t,i)=>{
+    const o = orig[i];
+    if(o && o.status && t.status && o.status!==t.status && !STD.includes(o.status) && STD.includes(t.status)){
+      statusLearn[o.status] = t.status;
+    }
+  });
   const res = await fetch('/api/workspace/sheet/'+sid+'/tasks',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({tasks:state.editTasks})});
   const d = await res.json();
   if(!res.ok){ $('editMsg').textContent='保存失败：'+(d.detail||''); return; }
-  $('editMsg').textContent=`已保存 ${d.n_tasks} 个任务并重新统计`;
+  let msg = `已保存 ${d.n_tasks} 个任务并重新统计`;
+  // 校对回写：删除的任务名 → 忽略词；状态修正 → 状态词学习
+  const ignoreNames = state.ignoredNames.slice();
+  state.ignoredNames = [];
+  if(ignoreNames.length || Object.keys(statusLearn).length){
+    try{
+      const lr = await fetch('/api/rules/learn',{method:'POST',headers:{'Content-Type':'application/json'},
+        body:JSON.stringify({ignore_names:ignoreNames, status_maps:statusLearn})});
+      const ld = await lr.json();
+      const li = (ld.learned||{}).ignore||[], ls = (ld.learned||{}).status||[];
+      if(li.length || ls.length){
+        msg += `；已学习：忽略词 ${li.length} 条${ls.length?`、状态词 ${ls.length} 条`:''}（规则库越用越准，可在「规则配置」管理）`;
+      }
+    }catch(e){ /* 回写失败不阻塞 */ }
+  }
+  $('editMsg').textContent = msg;
   await loadWorkspace();
   selectSheet(sid);
 }
@@ -488,6 +552,7 @@ function renderTable(tasks, name){
     <input placeholder="负责人筛选" value="${esc(f.owner)}" onchange="setFilter('${name}','owner',this.value)">
     <button class="btn btn-outline" style="font-size:12px;padding:4px 10px" onclick="resetFilters('${name}')">重置</button>
     <span style="font-size:12px;color:var(--muted)">共 ${rows.length} 条${rows.length>PAGE_SIZE?`，第 ${pg.page+1}/${pages} 页` : ''}</span>
+    <span style="font-size:12px;color:var(--muted)">图例：<span class="pill" style="background:${riskColor('风险')}">风险</span> <span class="pill" style="background:${riskColor('关注')}">关注</span> 无色=正常</span>
     ${rows.length>PAGE_SIZE?`<button class="btn btn-outline" style="font-size:12px;padding:4px 10px" onclick="pageTable('${name}',${pg.page-1})" ${pg.page===0?'disabled':''}>‹ 上一页</button>
     <button class="btn btn-outline" style="font-size:12px;padding:4px 10px" onclick="pageTable('${name}',${pg.page+1})" ${pg.page>=pages-1?'disabled':''}>下一页 ›</button>`:''}`;
   // 表头（带排序）
@@ -500,7 +565,8 @@ function renderTable(tasks, name){
     const rc = riskColor(t.risk_level||'正常');
     const rowStyle = t.risk_level==='风险'?`style="background:${tint(rc)}"`: (t.risk_level==='关注'?`style="background:${tint(rc,0.08)}"`:'');
     const sn = t.status_norm || t.status || '-';
-    h += `<tr ${rowStyle}><td>${pg.page*PAGE_SIZE+i+1}</td>
+    const tip = esc((t.note||t.risk_reason||''));
+    h += `<tr ${rowStyle} title="${tip}"><td>${pg.page*PAGE_SIZE+i+1}</td>
       <td>${esc(t.name)}</td><td>${esc(t.owner)}</td>
       <td>${t.progress!=null?t.progress+'%':'-'}</td>
       <td>${t.target_progress!=null?'<b>'+t.target_progress+'%</b>':'-'}</td>
@@ -548,6 +614,13 @@ async function loadRules(){
       html+=`<div class="field"><label>${m.label||k}</label>
         <select id="rule_${k}">${(m.options||[]).map(o=>`<option value="${o.value}" ${d.rules[k]===o.value?'selected':''}>${o.label}</option>`).join('')}</select>
         <div class="hint">${m.desc||''}</div></div>`;
+    }else if(m.type==='keywords' || m.type==='mapping'){
+      const isMap = m.type==='mapping';
+      const val = isMap ? Object.entries(d.rules[k]||{}).map(([a,b])=>a+'='+b).join('\n')
+                        : (d.rules[k]||[]).join('\n');
+      html+=`<div class="field"><label>${m.label||k}</label>
+        <textarea id="rule_${k}" rows="${isMap?3:4}" style="width:100%;font-size:12px;">${esc(val)}</textarea>
+        <div class="hint">${m.desc||''}</div></div>`;
     }else{
       html+=`<div class="field"><label>${m.label||k}（${m.unit||''}）</label>
         <input type="number" id="rule_${k}" value="${d.rules[k]}" min="${m.min||0}" max="${m.max||999}">
@@ -556,11 +629,22 @@ async function loadRules(){
   }
   $('ruleFields').innerHTML=html;
 }
+function parseMappingText(txt){
+  const out={};
+  String(txt||'').split('\n').forEach(line=>{
+    const i=line.indexOf('=');
+    if(i>0){ const a=line.slice(0,i).trim(), b=line.slice(i+1).trim(); if(a&&b) out[a]=b; }
+  });
+  return out;
+}
 async function saveRules(){
   const body={};
   ['delay_days_danger','risk_near_end_days','slow_progress_pct'].forEach(k=>{body[k]=parseInt($('rule_'+k).value)||0;});
   body.progress_curve = $('rule_progress_curve') ? $('rule_progress_curve').value : 'linear';
   ['color_risk','color_warning','color_normal'].forEach(k=>body[k]=$('rule_'+k).value);
+  if($('rule_ignore_keywords')) body.ignore_keywords = $('rule_ignore_keywords').value.split('\n').map(s=>s.trim()).filter(Boolean);
+  if($('rule_column_aliases')) body.column_aliases = parseMappingText($('rule_column_aliases').value);
+  if($('rule_status_words')) body.status_words = parseMappingText($('rule_status_words').value);
   const res=await fetch('/api/rules',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
   const d=await res.json();
   $('rulesMsg').className='msg ok'; $('rulesMsg').textContent=d.note||'已保存';
@@ -585,6 +669,7 @@ async function toggleHistory(){
 let tplBlocks = [];           // 当前画布 blocks
 let tplModules = [];          // 模块库
 let tplKpiOptions = [];       // KPI 可选字段
+let tplPresets = {};          // 预置模板
 let tplSet = state;           // 共享 state
 
 const MODULE_DEFAULTS = {
@@ -604,6 +689,10 @@ async function loadTemplate(){
   const d = await (await fetch('/api/template')).json();
   tplModules = d.modules || [];
   tplKpiOptions = d.kpi_options || [];
+  tplPresets = d.presets || {};
+  // 填充预置模板下拉
+  $('presetSelect').innerHTML = Object.keys(tplPresets).map(k=>
+    `<option value="${k}">${tplPresets[k].label}${tplPresets[k].desc?' — '+tplPresets[k].desc:''}</option>`).join('');
   if(d.format === 'blocks' && d.blocks && d.blocks.length){
     tplBlocks = d.blocks.map((b,i)=>({...b, _id:'b'+Date.now()+'_'+i}));
   } else {
@@ -611,6 +700,37 @@ async function loadTemplate(){
   }
   renderModuleLib();
   renderCanvas();
+}
+function loadPreset(){
+  const key = $('presetSelect').value;
+  const preset = (tplPresets||{})[key];
+  if(!preset) return;
+  tplBlocks = (preset.blocks||[]).map((b,i)=>({...b,_id:'b'+Date.now()+'_'+i}));
+  renderCanvas();
+  $('templateMsg').className='msg ok';
+  $('templateMsg').textContent=`已载入预置模板「${preset.label}」（可在画布继续编辑后保存）`;
+}
+async function previewTemplate(){
+  if(!tplBlocks || !tplBlocks.length){ alert('画布为空，先拖入或载入模板'); return; }
+  $('templateMsg').className=''; $('templateMsg').textContent='预览生成中...';
+  const clean = tplBlocks.map(({_id,...b})=>b);
+  const fd = new FormData();
+  const cur = state.current;
+  if(cur && cur.startsWith('sheet:')) fd.append('sheet_ids',cur.split(':')[1]);
+  else if(cur && cur.startsWith('group:')){
+    const g = state.groups[cur.split(':')[1]];
+    if(g && g.sheets) fd.append('sheet_ids',g.sheets.join(','));
+  }
+  fd.append('use_ai','false');
+  fd.append('template_blocks', JSON.stringify(clean));
+  try{
+    const res = await fetch('/api/generate',{method:'POST',body:fd});
+    const d = await res.json();
+    if(!res.ok) throw new Error(JSON.stringify(d));
+    $('templatePreview').innerHTML = d.generated[0].report;
+    $('templatePreview').style.display='block';
+    $('templateMsg').className='msg ok'; $('templateMsg').textContent='预览已生成（数据来自当前选中视图，未保存）';
+  }catch(e){ $('templateMsg').className='msg err'; $('templateMsg').textContent='预览失败:'+e.message; }
 }
 function useDefaultTemplate(){
   fetch('/api/template').then(r=>r.json()).then(d=>{
@@ -739,6 +859,7 @@ function currentHealth(){
   return null;
 }
 async function generateReport(){
+  const t0 = Date.now();
   // 数据体检前置：有缺项先提示，避免基于残缺数据生成
   const h = currentHealth();
   if(h){
@@ -783,6 +904,7 @@ async function generateReport(){
     if(g1.tokens && (g1.tokens.in + g1.tokens.out + g1.tokens.cache_hits) > 0){
       msg += `；本次 AI 消耗 ${g1.tokens.in} in / ${g1.tokens.out} out tok${g1.tokens.cache_hits?'（缓存命中 '+g1.tokens.cache_hits+'）':''}`;
     }
+    msg += `（耗时 ${((Date.now()-t0)/1000).toFixed(1)}s）`;
     $('genMsg').className=g1.ai_error?'msg err':'msg ok';
     $('genMsg').textContent=msg;
   }catch(e){ $('genMsg').className='msg err'; $('genMsg').textContent='生成失败:'+e.message; }
@@ -808,13 +930,60 @@ async function saveToHistory(){
 async function loadHistory(){
   const d=await(await fetch('/api/history')).json();
   $('historyList').innerHTML=d.items.map(it=>
-    `<li><span>📄 ${esc(it.name)}</span>
+    `<li><span>📄 ${esc(it.name)} ${it.has_stats?'<span class="pill" style="background:var(--primary);font-size:10px;">↻ 环比</span>':''}</span>
       <span style="display:flex;gap:8px;align-items:center"><span style="font-size:11px;color:var(--muted)">${it.mtime}</span>
-      <button class="btn btn-outline btn-sm" onclick="viewHistory('${it.name}')" style="font-size:11px;padding:4px 10px">查看</button></span></li>`).join('')||'<li style="color:var(--muted)">暂无历史</li>';
+      <button class="btn btn-outline btn-sm" onclick="viewHistory('${it.name}')" style="font-size:11px;padding:4px 10px">查看</button>
+      <button class="btn btn-outline btn-sm" onclick="renHistory('${it.name}')" style="font-size:11px;padding:4px 8px">重命名</button>
+      <button class="btn btn-danger btn-sm" onclick="delHistory('${it.name}')" style="font-size:11px;padding:4px 8px">删除</button></span></li>`).join('')||'<li style="color:var(--muted)">暂无历史</li>';
+  loadTrend();
 }
 async function viewHistory(name){
-  const t=await(await fetch('/api/history/'+name)).text();
+  const t=await(await fetch('/api/history/'+encodeURIComponent(name))).text();
   $('reportBox').innerHTML=t.includes('<')?t:('<pre>'+esc(t)+'</pre>');
+}
+async function delHistory(name){
+  if(!confirm('删除历史周报「'+name+'」？（其环比统计也会移除）')) return;
+  const res = await fetch('/api/history/'+encodeURIComponent(name)+'/delete',{method:'POST'});
+  if(res.ok){ loadHistory(); }
+}
+async function renHistory(name){
+  const nn = prompt('新名称（保留 .html 后缀）：', name);
+  if(!nn || nn===name) return;
+  const res = await fetch('/api/history/'+encodeURIComponent(name)+'/rename',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({new_name:nn})});
+  if(res.ok){ loadHistory(); } else { const d=await res.json().catch(()=>({})); alert(d.detail||'重命名失败'); }
+}
+async function loadTrend(){
+  const cv=$('trendCanvas'); if(!cv) return;
+  const ctx=cv.getContext('2d');
+  try{
+    const d=await(await fetch('/api/settings/trend')).json();
+    const s=d.series||[];
+    if(s.length<2){ $('trendMsg').textContent = s.length? '至少需要 2 期历史才能画趋势' : '暂无趋势数据（先生成周报并「存入历史」）'; ctx.clearRect(0,0,cv.width,cv.height); return; }
+    $('trendMsg').textContent='';
+    const pts=s.slice().reverse();   // 旧 → 新
+    const W=cv.width,H=cv.height,padL=40,padB=26,padT=16,padR=12;
+    const iw=W-padL-padR, ih=H-padT-padB;
+    ctx.clearRect(0,0,W,H);
+    ctx.strokeStyle='rgba(128,128,128,.22)'; ctx.fillStyle='#9AA0B5'; ctx.font='10px sans-serif';
+    for(let g=0; g<=4; g++){ const y=padT+ih*g/4; ctx.beginPath();ctx.moveTo(padL,y);ctx.lineTo(W-padR,y);ctx.stroke(); ctx.fillText(String(100-g*25),4,y+3); }
+    function x(i){ return padL+iw*i/(pts.length-1); }
+    function drawLine(key,color,scale){
+      ctx.strokeStyle=color; ctx.lineWidth=2; ctx.beginPath();
+      pts.forEach((p,i)=>{ const y=padT+ih*(1-Math.min((p[key]||0)*scale,100)/100); i?ctx.lineTo(x(i),y):ctx.moveTo(x(i),y); });
+      ctx.stroke();
+      ctx.fillStyle=color;
+      pts.forEach((p,i)=>{ const y=padT+ih*(1-Math.min((p[key]||0)*scale,100)/100); ctx.beginPath();ctx.arc(x(i),y,3,0,7);ctx.fill(); });
+    }
+    drawLine('completion_rate','#4A6CF7',1);
+    drawLine('avg_progress','#2E7D32',1);
+    drawLine('risk','#C0504D',0.2);   // 风险数 ×20% 折算到 0-100 显示
+    ctx.fillStyle='#9AA0B5'; ctx.font='10px sans-serif';
+    pts.forEach((p,i)=>{ ctx.fillText((p.time||'').slice(5,16), x(i)-22, H-8); });
+    ctx.font='11px sans-serif';
+    ctx.fillStyle='#4A6CF7'; ctx.fillText('— 完成率', padL, padT-4);
+    ctx.fillStyle='#2E7D32'; ctx.fillText('— 平均实际', padL+78, padT-4);
+    ctx.fillStyle='#C0504D'; ctx.fillText('— 风险(×20%)', padL+168, padT-4);
+  }catch(e){ $('trendMsg').textContent='趋势加载失败'; }
 }
 
 // ============ 设置（API Key 本地管理） ============
@@ -878,6 +1047,17 @@ async function clearTokenUsage(){
   loadTokenUsage();
 }
 
+// ============ 深色模式 / 首次引导 ============
+function toggleDark(){
+  document.body.classList.toggle('dark');
+  localStorage.setItem('pm_dark', document.body.classList.contains('dark') ? '1' : '0');
+  $('darkBtn').textContent = document.body.classList.contains('dark') ? '☀️' : '🌙';
+}
+function dismissOnboard(){
+  $('onboard').style.display='none';
+  localStorage.setItem('pm_onboard', '1');
+}
+
 // ============ 初始化 ============
 document.querySelectorAll('.tab').forEach(t=>t.addEventListener('click',()=>{
   document.querySelectorAll('.tab').forEach(x=>x.classList.remove('active'));
@@ -888,6 +1068,8 @@ document.querySelectorAll('.tab').forEach(t=>t.addEventListener('click',()=>{
   if(t.dataset.tab==='template') loadTemplate();
   if(t.dataset.tab==='settings'){ loadKeyStatus(); loadTokenUsage(); }
 }));
+if(localStorage.getItem('pm_dark')==='1'){ document.body.classList.add('dark'); $('darkBtn').textContent='☀️'; }
+if(!localStorage.getItem('pm_onboard')){ $('onboard').style.display='block'; }
 loadRules(); loadTemplate(); loadKeyStatus(); loadTokenUsage();
 </script>
 </body>
