@@ -37,6 +37,7 @@ class Task:
     slow_ok: bool = False             # 用户标记：该任务进度偏慢属正常，不再标红
     weight: float = 1.0               # 任务权重（影响完成率/平均进度，默认 1）
     critical: bool = False            # 人工标注：关键路径任务（不再自动计算）
+    source_line: str = ""             # 原文对照：来源原始行/行号（供源数据行级对照）
 
     def to_dict(self) -> Dict:
         d = asdict(self)
@@ -45,6 +46,19 @@ class Task:
             if d[k] is not None:
                 d[k] = d[k].isoformat()
         return d
+
+    @classmethod
+    def from_dict(cls, d: Dict) -> "Task":
+        """从 to_dict 输出恢复（日期字符串转回 date），用于工作区持久化。"""
+        d = dict(d or {})
+        for k in ("plan_start", "plan_end", "actual_end"):
+            v = d.get(k)
+            if isinstance(v, str) and v:
+                try:
+                    d[k] = date.fromisoformat(v)
+                except ValueError:
+                    d[k] = None
+        return cls(**{k: d.get(k) for k in cls.__dataclass_fields__})
 
 
 @dataclass
@@ -64,3 +78,15 @@ class Project:
             "source_files": self.source_files,
             "tasks": [t.to_dict() for t in self.tasks],
         }
+
+    @classmethod
+    def from_dict(cls, d: Dict) -> "Project":
+        d = dict(d or {})
+        return cls(
+            name=d.get("name") or "未命名项目",
+            period=d.get("period") or "",
+            source_files=list(d.get("source_files") or []),
+            tasks=[Task.from_dict(t) for t in (d.get("tasks") or [])],
+            parse_stats=dict(d.get("parse_stats") or {}),
+            rule_snapshot=list(d.get("rule_snapshot") or []),
+        )

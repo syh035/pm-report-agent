@@ -33,6 +33,8 @@ DEFAULT_RULES: Dict[str, Any] = {
     "ignore_keywords": [],       # 忽略词：命中该词的文本行/任务名不作为任务（如"下周重点"）
     "column_aliases": {},        # 自定义列名映射：{"表头名": "字段"}，字段 ∈ name/owner/progress/status/plan_start/plan_end/actual_end/note
     "status_words": {},          # 自定义状态词映射：{"变体词": "标准状态"}，如 {"搁置": "已滞后"}
+    # —— 对话式管理：AI 的工作要求（注入 AI 生成环节的指令，非规则引擎硬编码）——
+    "requirements": [],          # [{"title","description","scope","applies_to"}]
 }
 
 # 数值型字段（int）—— 颜色字段用字符串
@@ -114,6 +116,21 @@ def _normalize(rules: Dict[str, Any]) -> Dict[str, Any]:
                 out[k] = cleaned
             else:
                 out[k] = {}
+        elif k == "requirements":
+            # AI 工作要求：dict 列表，逐条保留 title/description/scope/applies_to
+            if isinstance(v, list):
+                cleaned = []
+                for item in v:
+                    if isinstance(item, dict) and str(item.get("title") or "").strip():
+                        cleaned.append({
+                            "title": str(item.get("title") or "").strip(),
+                            "description": str(item.get("description") or "").strip(),
+                            "scope": str(item.get("scope") or "全部"),
+                            "applies_to": str(item.get("applies_to") or "全部"),
+                        })
+                out[k] = cleaned
+            else:
+                out[k] = []
         else:
             try:
                 out[k] = int(float(v))

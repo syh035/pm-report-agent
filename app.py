@@ -69,12 +69,15 @@ def _load_stats_history() -> List[Dict]:
         return []
 
 
-def _append_stats_history(project_name: str, file_name: str, stats_dict: Dict) -> None:
-    """把一次周报统计写入历史（最多 50 条）。
-    project 用于环比匹配（按项目名），file 用于与历史文件对应。"""
+def _append_stats_history(project_name: str, file_name: str, stats_dict: Dict,
+                          rtype: str = "", period: str = "") -> None:
+    """把一次周报/日报统计写入历史（最多 50 条）。
+    project 用于环比匹配（按项目名），file 用于与历史文件对应；
+    rtype=day/week 供文稿库分类，period 供归档。"""
     h = _load_stats_history()
     h.insert(0, {"time": datetime.now().strftime("%Y-%m-%d %H:%M"),
-                 "project": project_name, "file": file_name, "stats": stats_dict})
+                 "project": project_name, "file": file_name, "stats": stats_dict,
+                 "rtype": rtype, "period": period})
     h = h[:50]
     try:
         with open(STATS_HISTORY_FILE, "w", encoding="utf-8") as f:
@@ -122,6 +125,49 @@ app = FastAPI(title="PM Report Agent", version="0.11.0")
 WORKSPACE: Dict = {"sheets": {}, "groups": {}, "package_id": str(uuid.uuid4())[:8]}
 
 
+def _persist_workspace() -> None:
+    """把当前工作区（分组 + sheet 元数据）落盘，重启自动恢复。"""
+    try:
+        from pmo_report import datastore
+        datastore.save_workspace(WORKSPACE["sheets"], WORKSPACE["groups"])
+    except Exception:
+        pass
+
+
+def _restore_workspace() -> None:
+    """启动时恢复上次的工作区（分组 + sheet 元数据）。"""
+    try:
+        from pmo_report import datastore
+        st = datastore.load_workspace()
+        if not st:
+            return
+        # 只恢复分组结构与 sheet 元数据；project 对象在 _workspace_view 需要时再解析？
+        # —— 直接整体恢复：project 已由 from_dict 还原，stats 需要重算
+        for sid, meta in (st.get("sheets") or {}).items():
+            proj = meta.get("project")
+            if proj is None:
+                continue
+            try:
+                stats = analyze(proj, rules=load_rules())
+            except Exception:
+                stats = None
+            WORKSPACE["sheets"][sid] = {
+                "name": meta.get("name") or proj.name,
+                "source": meta.get("source", ""),
+                "source_id": meta.get("source_id", ""),
+                "project": proj,
+                "_stats": stats.to_dict() if stats else {},
+                "parse_stats": meta.get("parse_stats") or {},
+                "rule_tasks": meta.get("rule_tasks") or [],
+            }
+        WORKSPACE["groups"] = dict(st.get("groups") or {})
+    except Exception:
+        pass
+
+
+_restore_workspace()
+
+
 def _next_sid():
     return "S" + str(len(WORKSPACE["sheets"]) + 1)
 
@@ -152,6 +198,7 @@ def _workspace_view() -> Dict:
             "id": sid,
             "name": sh["name"],
             "source": sh["source"],
+            "source_id": sh.get("source_id", ""),
             "stats": sh["_stats"],
             "tasks_full": [t.to_dict() for t in sh["project"].tasks],  # 供任务校对编辑
             "parse_stats": sh.get("parse_stats") or {},                # 解析质量度量
@@ -182,6 +229,8 @@ class RulesIn(BaseModel):
     ignore_keywords: Optional[List[str]] = None
     column_aliases: Optional[Dict[str, str]] = None
     status_words: Optional[Dict[str, str]] = None
+    # 对话式管理：AI 的工作要求（规则引擎之外，注入 AI 生成的指令）
+    requirements: Optional[List[Dict]] = None
 
 
 class RenameIn(BaseModel):
@@ -196,6 +245,13 @@ class GroupSheetIn(BaseModel):
     sheet_id: str
 
 
+class BatchIn(BaseModel):
+    """批量操作：action ∈ move | ungroup | delete；move 时 gid 为目标分组。"""
+    action: str
+    sheet_ids: List[str] = []
+    gid: Optional[str] = None
+
+
 class TemplateIn(BaseModel):
     content: str = ""
     format: Optional[str] = "html"   # html | blocks
@@ -206,6 +262,8 @@ class SaveReportIn(BaseModel):
     filename: str
     content: str
     stats: Optional[Dict] = None   # 统计汇总（写入环比历史）
+    report_type: Optional[str] = ""   # day=日报 / week=周报 / other
+    period: Optional[str] = ""        # 统计周期/日期（文稿库归档用）
 
 
 class TaskUpdateIn(BaseModel):
@@ -258,35 +316,107 @@ def workspace_view():
 
 
 @app.post("/api/workspace/load")
-async def workspace_load(files: List[UploadFile] = File(...)):
+async def workspace_load(files: List[UploadFile] = File(...),
+                         overwrite: str = Form("false"),
+                         rename: str = Form("false")):
     created = []
+    renamed: List[Dict] = []
     for uf in files:
         tmp = _save_upload_to_tmp(uf)
         ext = os.path.splitext(uf.filename or "")[1].lower()
+        fname = uf.filename or "未命名"
         try:
+            # 源数据仓库：原始文件永久归档（不再删除）
+            from pmo_report import datastore
+            # 重名处理：
+            #  - overwrite=true：删除同名旧源及其板块/条目，用原名覆盖
+            #  - rename=true：自动改名为「原名(2).ext」，保留旧文件
+            if rename.strip().lower() == "true":
+                base, dot = os.path.splitext(fname)
+                n = 2
+                while datastore.find_sources_by_name(f"{base}({n}){dot}"):
+                    n += 1
+                new_name = f"{base}({n}){dot}"
+                renamed.append({"old": fname, "new": new_name})
+                fname = new_name
+            elif overwrite.strip().lower() == "true":
+                for old in datastore.find_sources_by_name(fname):
+                    datastore.delete_source(old["id"])
+                    # 工作区中引用该 source 的 sheet 一并移除
+                    for sid in [s for s, sh in WORKSPACE["sheets"].items()
+                                if sh.get("source_id") == old["id"]]:
+                        del WORKSPACE["sheets"][sid]
+                        for g in WORKSPACE["groups"].values():
+                            if sid in g["sheets"]:
+                                g["sheets"].remove(sid)
+            source_id = datastore.save_source(fname, tmp)
+            dataset_sections = None
             if ext in (".xlsx", ".xlsm"):
                 # Excel 多 sheet：每个工作表生成一个独立 sheet 对象
                 from pmo_report.parsers import tabular_parser
                 sheet_projects = tabular_parser.parse_excel_all(tmp)
+                # 数据集形态：保留每 sheet 的完整板块结构（指标/里程碑/风险/依赖/资源/预算/计划/RFA/附录），
+                # 供「模板 + 数据集 → AI 严格按模板抓数生成周报」使用；同时分类入仓。
+                try:
+                    from pmo_report.dataset import parse_dataset_sheets
+                    dataset_sections = parse_dataset_sheets(tmp)
+                    datastore.save_dataset_sections(source_id, dataset_sections)
+                except Exception:
+                    dataset_sections = None
             else:
                 sheet_projects = [(os.path.splitext(uf.filename or "")[0], parse_file(tmp, period=""))]
         except Exception as e:
             raise HTTPException(500, f"解析 {uf.filename} 失败: {e}")
         finally:
             os.path.exists(tmp) and os.remove(tmp)
+        is_dataset = bool(dataset_sections)
         for name, proj in sheet_projects:
             sid = _next_sid()
             stats = analyze(proj, rules=load_rules())
             WORKSPACE["sheets"][sid] = {
                 "name": proj.name or name,
                 "source": uf.filename or "",
+                "source_id": source_id,
                 "project": proj,
                 "_stats": stats.to_dict(),
                 "parse_stats": proj.parse_stats,
                 "rule_tasks": proj.rule_snapshot,
+                "sheet_type": "dataset" if is_dataset else "task",
             }
             created.append(sid)
-    return {"ok": True, "created": created, "workspace": _workspace_view()}
+        # 分类入仓：任务 → task；风险项 → risk；未识别 → raw；
+        # 数据集板块 → milestone/metric/decision/issue 等（板块化，不再强压成 task）
+        if sheet_projects:
+            items = []
+            for _, proj in sheet_projects:
+                for t in proj.tasks:
+                    items.append(("task", t.name, {
+                        "owner": t.owner, "progress": t.progress, "status": t.status,
+                        "plan_end": t.plan_end.isoformat() if t.plan_end else None,
+                        "note": t.note, "source_line": t.source_line,
+                    }, ""))
+            st_all = [analyze(p, rules=load_rules()) for _, p in sheet_projects]
+            for st in st_all:
+                for ts in st.task_stats:
+                    if ts.risk_level != "正常":
+                        items.append(("risk", ts.task.name, {
+                            "level": ts.risk_level, "reason": ts.risk_reason, "source_line": ts.task.source_line,
+                        }, ""))
+            # 数据集板块分类入仓（保留字段，供看板/周报/自定义块取数）
+            if dataset_sections:
+                from pmo_report.dataset import _section_kind_hint
+                for sec in dataset_sections:
+                    kind = _section_kind_hint(sec.get("section", ""))
+                    for r in sec.get("rows", []):
+                        name = r.get(sec["headers"][0]) if sec.get("headers") else ""
+                        name = str(name or "").strip()
+                        if not name:
+                            continue
+                        items.append((kind, name, {"section": sec["section"], "fields": r}, ""))
+            datastore.add_items(source_id, items)
+    _persist_workspace()
+    return {"ok": True, "created": created, "renamed": renamed,
+            "is_dataset": is_dataset, "workspace": _workspace_view()}
 
 
 @app.post("/api/workspace/sheet/{sid}/delete")
@@ -297,6 +427,7 @@ def workspace_sheet_delete(sid: str):
     for g in WORKSPACE["groups"].values():
         if sid in g["sheets"]:
             g["sheets"].remove(sid)
+    _persist_workspace()
     return {"ok": True, "workspace": _workspace_view()}
 
 
@@ -305,6 +436,7 @@ def workspace_sheet_rename(sid: str, payload: RenameIn):
     if sid not in WORKSPACE["sheets"]:
         raise HTTPException(404, "sheet 不存在")
     WORKSPACE["sheets"][sid]["name"] = payload.name.strip() or WORKSPACE["sheets"][sid]["name"]
+    _persist_workspace()
     return {"ok": True, "workspace": _workspace_view()}
 
 
@@ -312,6 +444,7 @@ def workspace_sheet_rename(sid: str, payload: RenameIn):
 def workspace_group_create(payload: GroupIn):
     gid = "G" + str(len(WORKSPACE["groups"]) + 1)
     WORKSPACE["groups"][gid] = {"name": payload.name or "新分组", "sheets": []}
+    _persist_workspace()
     return {"ok": True, "workspace": _workspace_view()}
 
 
@@ -327,6 +460,7 @@ def workspace_group_add_sheet(gid: str, payload: GroupSheetIn):
         if sid in g["sheets"]:
             g["sheets"].remove(sid)
     WORKSPACE["groups"][gid]["sheets"].append(sid)
+    _persist_workspace()
     return {"ok": True, "workspace": _workspace_view()}
 
 
@@ -334,6 +468,7 @@ def workspace_group_add_sheet(gid: str, payload: GroupSheetIn):
 def workspace_group_delete(gid: str):
     if gid in WORKSPACE["groups"]:
         del WORKSPACE["groups"][gid]
+    _persist_workspace()
     return {"ok": True, "workspace": _workspace_view()}
 
 
@@ -345,7 +480,360 @@ def workspace_sheet_ungroup(sid: str):
     for g in WORKSPACE["groups"].values():
         if sid in g["sheets"]:
             g["sheets"].remove(sid)
+    _persist_workspace()
     return {"ok": True, "workspace": _workspace_view()}
+
+
+@app.post("/api/workspace/batch")
+def workspace_batch(payload: BatchIn):
+    """批量操作：move（移入/移出分组）、ungroup（全部移出）、delete（删除）。
+
+    返回 {ok, done, missing, workspace}。部分失败不整体回滚，缺失的 sheet 计入 missing。
+    """
+    action = (payload.action or "").strip()
+    if action not in {"move", "ungroup", "delete"}:
+        raise HTTPException(400, "action 必须是 move / ungroup / delete")
+    if not payload.sheet_ids:
+        raise HTTPException(400, "sheet_ids 不能为空")
+    if action == "move" and payload.gid not in WORKSPACE["groups"]:
+        raise HTTPException(404, "目标分组不存在")
+    done, missing = [], []
+    for sid in payload.sheet_ids:
+        if sid not in WORKSPACE["sheets"]:
+            missing.append(sid)
+            continue
+        if action == "delete":
+            del WORKSPACE["sheets"][sid]
+            for g in WORKSPACE["groups"].values():
+                if sid in g["sheets"]:
+                    g["sheets"].remove(sid)
+        elif action == "ungroup":
+            for g in WORKSPACE["groups"].values():
+                if sid in g["sheets"]:
+                    g["sheets"].remove(sid)
+        else:  # move
+            if sid in WORKSPACE["groups"][payload.gid]["sheets"]:
+                done.append(sid)
+                continue
+            for g in WORKSPACE["groups"].values():
+                if sid in g["sheets"]:
+                    g["sheets"].remove(sid)
+            WORKSPACE["groups"][payload.gid]["sheets"].append(sid)
+        done.append(sid)
+    _persist_workspace()
+    return {"ok": True, "done": done, "missing": missing, "workspace": _workspace_view()}
+
+
+# ================= 源数据仓库（原始文件保留 + 行级对照 + 分类数据仓） =================
+@app.get("/api/sources/duplicate-check")
+def check_source_duplicate(name: str = ""):
+    """上传前重名检测：返回已有同名源（前端弹窗让用户选 覆盖/改名/取消）。"""
+    from pmo_report import datastore
+    dup = datastore.find_sources_by_name((name or "").strip())
+    return {"duplicate": bool(dup), "count": len(dup),
+            "items": [{"id": d["id"], "filename": d["filename"], "uploaded_at": d["uploaded_at"]} for d in dup]}
+
+
+@app.get("/api/sources")
+def list_sources():
+    from pmo_report import datastore
+    items = datastore.list_sources()
+    by_src: Dict[str, int] = {}
+    for sh in WORKSPACE["sheets"].values():
+        by_src[sh.get("source_id", "")] = by_src.get(sh.get("source_id", ""), 0) + 1
+    for it in items:
+        it["n_sheets"] = by_src.get(it["id"], 0)
+        it["has_dataset"] = datastore.get_dataset_sections(it["id"]) is not None
+    return {"items": items, "summary": datastore.items_summary()}
+
+
+@app.get("/api/sources/{sid}")
+def source_detail(sid: str):
+    """源数据详情：原文内容 + 解析任务（含 source_line 行级对照）。"""
+    from pmo_report import datastore
+    src = datastore.get_source(sid)
+    if not src:
+        raise HTTPException(404, "源数据不存在")
+    ext = src["ext"]
+    raw_rows, text = [], ""
+    try:
+        if ext in (".csv", ".txt"):
+            from pmo_report.parsers.tabular_parser import _read_csv_rows
+            raw_rows = _read_csv_rows(src["stored_path"])
+        elif ext in (".docx",):
+            from pmo_report.parsers.text_parser import _extract_text_docx
+            text = _extract_text_docx(src["stored_path"])
+        elif ext in (".pdf",):
+            from pmo_report.parsers.text_parser import _extract_text_pdf
+            text = _extract_text_pdf(src["stored_path"], use_ocr=False)
+        else:
+            with open(src["stored_path"], "r", encoding="utf-8", errors="replace") as f:
+                text = f.read()
+    except Exception as e:
+        text = f"[读取原文失败: {e}]"
+    sheets = []
+    for sid_key, sh in WORKSPACE["sheets"].items():
+        if sh.get("source_id") == sid:
+            sheets.append({"sid": sid_key, "name": sh["name"],
+                           "tasks": [t.to_dict() for t in sh["project"].tasks],
+                           "parse_stats": sh.get("parse_stats") or {}})
+    # 数据集板块（若有）：源数据详情里可查看完整板块结构
+    dataset_sections = None
+    try:
+        dataset_sections = datastore.get_dataset_sections(sid)
+    except Exception:
+        dataset_sections = None
+    return {"source": src, "raw_rows": raw_rows, "text": text, "sheets": sheets,
+            "dataset_sections": dataset_sections}
+
+
+@app.get("/api/dataset/{sid}")
+def dataset_detail(sid: str):
+    """数据集板块详情（供前端展示 / AI 抓数预览）。"""
+    from pmo_report import datastore
+    src = datastore.get_source(sid)
+    if not src:
+        raise HTTPException(404, "源数据不存在")
+    sections = datastore.get_dataset_sections(sid)
+    if sections is None:
+        raise HTTPException(404, "该文件没有数据集板块（仅 Excel 多 sheet 数据集支持）")
+    return {"source": src, "sections": sections}
+
+
+@app.get("/api/sources/{sid}/download")
+def source_download(sid: str):
+    from pmo_report import datastore
+    src = datastore.get_source(sid)
+    if not src or not os.path.exists(src["stored_path"]):
+        raise HTTPException(404, "源文件不存在")
+    return StreamingResponse(open(src["stored_path"], "rb"),
+                             media_type="application/octet-stream",
+                             headers={"Content-Disposition": _content_disposition(src["filename"])})
+
+
+@app.get("/api/items")
+def list_items(kind: str = "", period: str = ""):
+    """分类数据仓查询（kind：task/risk/issue/decision/milestone/metric/raw）。"""
+    from pmo_report import datastore
+    return {"items": datastore.query_items(kind=kind or None, period=period or None)}
+
+
+@app.get("/api/dashboard")
+def get_dashboard():
+    """分组看板数据：全局汇总 + 各分组独立汇总 + 趋势序列 + 分类仓摘要。
+    设计语言遵循看板 skill：KPI 卡带涨跌/迷你趋势、升即坏反色、分组各自成区不混在一起。"""
+    rules = load_rules()
+    all_sheets = [sh for sh in WORKSPACE["sheets"].values() if "project" in sh]
+    global_stats = _summarize_sheet(all_sheets) if all_sheets else None
+    groups = []
+    for gid, g in WORKSPACE["groups"].items():
+        member = [WORKSPACE["sheets"][s] for s in g["sheets"] if s in WORKSPACE["sheets"] and "project" in WORKSPACE["sheets"][s]]
+        groups.append({"gid": gid, "name": g["name"], "summary": _summarize_sheet(member) if member else None})
+    # 趋势序列（来自已保存的历史统计，按项目/分组名聚合出迷你趋势）
+    h = _load_stats_history()
+    series = [{"time": e.get("time", ""), "name": e.get("project") or e.get("file", ""),
+               "completion_rate": (e.get("stats") or {}).get("completion_rate"),
+               "risk": (e.get("stats") or {}).get("risk")} for e in h[:30]]
+    from pmo_report import datastore
+    return {"global": global_stats, "groups": groups, "trend": series,
+            "items_summary": datastore.items_summary()}
+
+
+@app.post("/api/workspace/sheet/{sid}/ai-review")
+def ai_review_sheet(sid: str):
+    """AI 深度解析：把规则解析结果交给 AI 校验/修正字段（复杂数据增强理解）。
+    返回修正后的任务 + 原始规则快照（前端 diff 展示，人工确认后保存）。"""
+    from pmo_report import prompts as prompts_mod
+    if sid not in WORKSPACE["sheets"]:
+        raise HTTPException(404, "sheet 不存在")
+    sh = WORKSPACE["sheets"][sid]
+    tasks = sh["project"].tasks
+    if not tasks:
+        raise HTTPException(400, "该 sheet 无任务可校验")
+    payload = [{"name": t.name, "owner": t.owner, "progress": t.progress,
+                "status": t.status, "plan_end": t.plan_end.isoformat() if t.plan_end else None,
+                "note": t.note, "source_line": t.source_line} for t in tasks]
+    entry = prompts_mod.get_prompt("ai_review")
+    prompt = prompts_mod.render_user(entry, {"tasks_json": json.dumps(payload, ensure_ascii=False)})
+    try:
+        out = ai_mod.call_with_cache(
+            "ai_review",
+            [{"role": "system", "content": entry.get("system", "")},
+             {"role": "user", "content": prompt}],
+            temperature=0.2, max_tokens=1500,
+        )
+    except Exception as e:
+        return {"ok": False, "error": str(e)}
+    # 解析 + schema 校验（复用提炼校验口径）
+    import re as _re
+    m = _re.search(r"\[.*\]", out, _re.S)
+    if not m:
+        return {"ok": False, "error": "AI 未返回有效 JSON"}
+    try:
+        data = json.loads(m.group(0))
+    except Exception:
+        return {"ok": False, "error": "AI 返回 JSON 解析失败"}
+    _VALID = {"已完成", "进行中", "未开始", "已滞后", "有风险"}
+    corrected = []
+    for item in data if isinstance(data, list) else []:
+        if not isinstance(item, dict) or not str(item.get("name") or "").strip():
+            continue
+        t = Task(name=str(item.get("name") or "").strip(),
+                 owner=str(item.get("owner") or "").strip(),
+                 status=str(item.get("status") or "").strip() if str(item.get("status") or "").strip() in _VALID else "",
+                 note=str(item.get("note") or "").strip(),
+                 depends_on=str(item.get("depends_on") or "").strip())
+        p = item.get("progress")
+        try:
+            t.progress = None if p in (None, "") else max(0.0, min(float(p), 100.0))
+        except (TypeError, ValueError):
+            t.progress = None
+        pe = item.get("plan_end")
+        if pe:
+            t.plan_end = parse_date(str(pe))
+        corrected.append(t.to_dict())
+    if not corrected:
+        return {"ok": False, "error": "AI 未产出有效任务"}
+    return {"ok": True, "tasks": corrected,
+            "rule_tasks": [t.to_dict() for t in tasks],
+            "note": "AI 深度解析完成，请在编辑页核对（AI改 标注）后保存"}
+
+
+# ================= Agent 一句话入口（受限 agent：意图识别 → 固定动作序列 → 执行日志） =================
+AGENT_INTENTS = {"generate_report", "dashboard", "risks", "help"}
+
+
+def _parse_agent_intent(instr: str, log: list):
+    """意图识别：优先 AI（可编辑提示词），无 Key/失败时关键词回退。返回 (intent, params, ai_used)。"""
+    from pmo_report import prompts as prompts_mod
+    entry = prompts_mod.get_prompt("agent_intent")
+    try:
+        prompt = prompts_mod.render_user(entry, {"instruction": instr[:500]})
+        out = ai_mod.call_with_cache(
+            "agent_intent",
+            [{"role": "system", "content": entry.get("system", "")},
+             {"role": "user", "content": prompt}],
+            temperature=0, max_tokens=120,
+        )
+        m = re.search(r"\{.*\}", out, re.S)
+        data = json.loads(m.group(0)) if m else {}
+        intent = str(data.get("intent") or "")
+        if intent in AGENT_INTENTS:
+            params = data.get("params") or {}
+            log.append({"step": "意图识别", "tool": "LLM", "detail": f"{intent} {json.dumps(params, ensure_ascii=False)}"})
+            return intent, params, True
+    except Exception:
+        pass
+    # 关键词回退
+    intent, params = "help", {}
+    if "日报" in instr or "日" in instr.strip()[:6]:
+        intent, params = "generate_report", {"report_type": "day"}
+    elif "周报" in instr or "周" in instr.strip()[:6] or "生成" in instr or "做周报" in instr:
+        intent, params = "generate_report", {"report_type": "week"}
+    elif "风险" in instr or "预警" in instr:
+        intent = "risks"
+    elif "看板" in instr or "概览" in instr or "总体" in instr:
+        intent = "dashboard"
+    if "项目" in instr:
+        m2 = re.search(r"项目[:：]?\s*([\u4e00-\u9fa5A-Za-z0-9]{2,20})", instr)
+        if m2:
+            params["project_name"] = m2.group(1)
+    log.append({"step": "意图识别", "tool": "规则回退", "detail": f"{intent} {json.dumps(params, ensure_ascii=False)}"})
+    return intent, params, False
+
+
+def _agent_generate_report(params: dict, log: list):
+    rules = load_rules()
+    sheets = [sh for sh in WORKSPACE["sheets"].values() if "project" in sh]
+    pname = (params.get("project_name") or "").strip()
+    if pname:
+        sheets = [sh for sh in sheets if pname in (sh.get("name") or "") or pname in (sh["project"].name or "")]
+    log.append({"step": "收集数据", "tool": "工作区", "detail": f"选中 {len(sheets)} 个 sheet"})
+    if not sheets:
+        return {"report": "<p>（工作区暂无数据，请先上传）</p>", "text": "工作区暂无数据", "log_done": True}
+    stats_list = [analyze(sh["project"], rules=rules) for sh in sheets]
+    merged = _merge_stats(stats_list, name=params.get("project_name") or "Agent 生成", period=params.get("period") or "", rules=rules)
+    log.append({"step": "统计", "tool": "规则引擎", "detail": f"任务 {merged.total_tasks} 完成率 {merged.completion_rate}%"})
+    gen = ReportGenerator()
+    result = gen.render(merged, use_ai=False, rules=rules)
+    log.append({"step": "渲染", "tool": "模板", "detail": "周报 HTML 生成"})
+    return {"report": result["report_html"], "text": result["report_text"]}
+
+
+def _agent_risks(log: list):
+    rows = []
+    seen = set()
+    for sh in WORKSPACE["sheets"].values():
+        if "project" not in sh:
+            continue
+        stats = analyze(sh["project"], rules=load_rules())
+        for ts in stats.task_stats:
+            if ts.risk_level != "正常" and ts.task.name not in seen:
+                seen.add(ts.task.name)
+                rows.append(f"{ts.task.name}（{ts.risk_level}）：{ts.risk_reason or '需关注'}")
+    log.append({"step": "查询", "tool": "规则引擎", "detail": f"风险 {len(rows)} 条"})
+    if not rows:
+        return {"report": "<p>无风险/预警项</p>", "text": "无风险/预警项"}
+    html = '<ul style="margin:10px 0 10px 18px;line-height:1.8;">' + "".join(f"<li>{esc_(r)}</li>" for r in rows[:30]) + "</ul>"
+    return {"report": html, "text": "\n".join(rows)}
+
+
+def _agent_dashboard(log: list):
+    from pmo_report import datastore
+    rules = load_rules()
+    all_sheets = [sh for sh in WORKSPACE["sheets"].values() if "project" in sh]
+    g = _summarize_sheet(all_sheets) if all_sheets else None
+    lines = []
+    if g:
+        lines.append(f"总任务 {g.get('total',0)}，完成率 {g.get('completion_rate')}%，平均实际 {g.get('avg_progress')}%，风险 {g.get('risk')}，滞后 {g.get('delayed')}，关键任务 {sum(1 for t in (g.get('tasks') or []) if t.get('is_critical'))}")
+    for gid, gr in WORKSPACE["groups"].items():
+        member = [WORKSPACE["sheets"][s] for s in gr["sheets"] if s in WORKSPACE["sheets"] and "project" in WORKSPACE["sheets"][s]]
+        sg = _summarize_sheet(member) if member else None
+        if sg:
+            lines.append(f"分组「{gr['name']}」：任务 {sg.get('total',0)}，完成率 {sg.get('completion_rate')}%，风险 {sg.get('risk')}")
+    lines.append("分类仓：" + "、".join(f"{k} {v}" for k, v in (datastore.items_summary() or {}).items()))
+    log.append({"step": "查询", "tool": "看板", "detail": f"{len(lines)} 行概览"})
+    text = "\n".join(lines) or "工作区暂无数据"
+    html = "<p>" + "<br>".join(esc_(l) for l in lines) + "</p>"
+    return {"report": html, "text": text}
+
+
+def _agent_help(log: list):
+    help_text = ("支持指令示例：\n"
+                 "· 生成周报 / 生成日报（可加：项目：xxx）\n"
+                 "· 列出风险 / 风险预警\n"
+                 "· 看板概览 / 总体情况\n"
+                 "· 帮助")
+    log.append({"step": "帮助", "tool": "-", "detail": "返回帮助"})
+    return {"report": f"<pre>{help_text}</pre>", "text": help_text}
+
+
+def esc_(s):
+    return str(s).replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+
+
+class AgentRunIn(BaseModel):
+    instruction: str = ""
+
+
+@app.post("/api/agent/run")
+def agent_run(payload: AgentRunIn):
+    """受限 agent：意图识别（AI 或关键词回退）→ 固定动作序列（走现有工具）→ 执行日志。
+    所有数字/统计仍由规则引擎与工具层产出，AI 只做意图理解，不参与计算。"""
+    instr = (payload.instruction or "").strip()
+    if not instr:
+        raise HTTPException(400, "指令为空")
+    log = []
+    intent, params, ai_used = _parse_agent_intent(instr, log)
+    if intent == "generate_report":
+        result = _agent_generate_report(params, log)
+    elif intent == "risks":
+        result = _agent_risks(log)
+    elif intent == "dashboard":
+        result = _agent_dashboard(log)
+    else:
+        result = _agent_help(log)
+    return {"ok": True, "intent": intent, "ai_used": ai_used, "log": log, **result}
 
 
 @app.post("/api/workspace/sheet/{sid}/tasks")
@@ -382,7 +870,92 @@ def update_sheet_tasks(sid: str, payload: TaskUpdateIn):
             new_tasks.append(t)
     proj.tasks = new_tasks
     WORKSPACE["sheets"][sid]["_stats"] = analyze(proj, rules=load_rules()).to_dict()
+    _persist_workspace()
     return {"ok": True, "n_tasks": len(new_tasks), "workspace": _workspace_view()}
+
+
+def _extract_document_text(path: str) -> str:
+    """从 Word/PDF/HTML/文本 中提取模板原文（供 AI 严格照抄结构）。"""
+    ext = os.path.splitext(path)[1].lower()
+    if ext in (".docx",):
+        from pmo_report.parsers.text_parser import _extract_text_docx
+        return _extract_text_docx(path)
+    if ext in (".pdf",):
+        from pmo_report.parsers.text_parser import _extract_text_pdf
+        return _extract_text_pdf(path, use_ocr=False)
+    if ext in (".html", ".htm"):
+        with open(path, "r", encoding="utf-8", errors="replace") as f:
+            return f.read()
+    with open(path, "r", encoding="utf-8", errors="replace") as f:
+        return f.read()
+
+
+class DatasetReportIn(BaseModel):
+    """模板+数据集生成：source_id 为数据集文件，template_text 可直接传文本。"""
+    source_id: str
+    template_text: str = ""
+
+
+@app.post("/api/dataset/template-extract")
+async def dataset_template_extract(file: UploadFile = File(...)):
+    """上传周报模板文档（Word/PDF/HTML/txt），提取原文文本返回，供 dataset_report 使用。"""
+    tmp = _save_upload_to_tmp(file)
+    try:
+        text = _extract_document_text(tmp)
+    except Exception as e:
+        raise HTTPException(500, f"模板提取失败: {e}")
+    finally:
+        os.path.exists(tmp) and os.remove(tmp)
+    return {"ok": True, "filename": file.filename or "", "text": text[:20000]}
+
+
+@app.post("/api/dataset/report")
+def dataset_report(payload: DatasetReportIn):
+    """核心能力：上传周报模板 + 数据集 → AI 严格按模板结构、从数据集板块抓数生成周报。
+
+    数据一致性：模板中的示例数字是格式示意，AI 必须替换为数据集真实值；
+    生成后返回报告 HTML，并在 detail 中提示数据集里的真实指标供核对。
+    """
+    from pmo_report import datastore
+    from pmo_report.dataset import sections_to_markdown
+    from pmo_report import prompts as prompts_mod
+    src = datastore.get_source(payload.source_id)
+    if not src:
+        raise HTTPException(404, "源数据不存在")
+    sections = datastore.get_dataset_sections(payload.source_id)
+    if not sections:
+        raise HTTPException(400, "该文件没有数据集板块（仅支持多 sheet 数据集 Excel）")
+    template_text = (payload.template_text or "").strip()
+    if not template_text:
+        raise HTTPException(400, "请提供周报模板（文本，或在前端上传模板文档）")
+    dataset_text = sections_to_markdown(sections)
+    entry = prompts_mod.get_prompt("dataset_report")
+    prompt = prompts_mod.render_user(entry, {"template_text": template_text[:8000],
+                                             "dataset_text": dataset_text[:20000]})
+    out = ai_mod.call_with_cache(
+        "dataset_report",
+        [{"role": "system", "content": entry.get("system", "")},
+         {"role": "user", "content": prompt}],
+        temperature=0.3, max_tokens=4000,
+    )
+    out = (out or "").strip()
+    # 去掉可能的代码块包裹（含未闭合的 ```html 前缀）
+    if out.startswith("```"):
+        out = re.sub(r"^```(?:html)?\s*", "", out)
+        out = re.sub(r"```\s*$", "", out)
+    m = re.search(r"```(?:html)?\s*(.*?)```", out, re.S)
+    if m:
+        out = m.group(1).strip()
+    if "<" not in out or ">" not in out:
+        raise HTTPException(502, "AI 未产出有效 HTML 报告")
+    # 提供数据集关键指标供人工核对（AI 生成内容不代写数字正确性）
+    metrics = []
+    for sec in sections:
+        if "指标" in sec.get("section", "") or "kpi" in sec.get("section", "").lower():
+            metrics = sec.get("rows", [])[:12]
+            break
+    return {"ok": True, "html": out, "source": src["filename"],
+            "sections": [s["section"] for s in sections], "metrics": metrics}
 
 
 @app.post("/api/export/tasks")
@@ -468,6 +1041,96 @@ def learn_rules(payload: RulesLearnIn):
         rules_mod.save_rules(rules)
     return {"ok": True, "learned": learned,
             "note": f"已学习忽略词 {len(learned['ignore'])} 条、状态词 {len(learned['status'])} 条（本地生效）"}
+
+
+class RulesConverseIn(BaseModel):
+    instruction: str = ""
+
+
+@app.post("/api/rules/converse")
+def rules_converse(payload: RulesConverseIn):
+    """规则对话式管理（第一步）：用户用自然语言描述规则/工作要求 →
+    AI 理解并转成结构化规则 JSON（待人工确认，不直接写入）。"""
+    from pmo_report import prompts as prompts_mod
+    instr = (payload.instruction or "").strip()
+    if not instr:
+        raise HTTPException(400, "请描述您想要的规则或工作要求")
+    entry = prompts_mod.get_prompt("rule_intent")
+    prompt = prompts_mod.render_user(entry, {"instruction": instr[:1000]})
+    try:
+        out = ai_mod.call_with_cache(
+            "rule_intent",
+            [{"role": "system", "content": entry.get("system", "")},
+             {"role": "user", "content": prompt}],
+            temperature=0, max_tokens=400,
+        )
+    except Exception as e:
+        raise HTTPException(502, f"AI 理解失败（可检查 API Key）：{e}")
+    m = re.search(r"\{.*\}", out or "", re.S)
+    data = json.loads(m.group(0)) if m else {}
+    if not data.get("type") or data.get("type") == "other":
+        return {"ok": True, "understood": False,
+                "note": "AI 未能识别为规则需求，请换一种表达（如：超期超过10天标记高风险）",
+                "draft": None}
+    return {"ok": True, "understood": True, "draft": data,
+            "note": "请确认下面 AI 理解的规则，确认后将写入规则库"}
+
+
+class RulesConfirmIn(BaseModel):
+    draft: Dict = {}
+
+
+@app.post("/api/rules/converse/confirm")
+def rules_converse_confirm(payload: RulesConfirmIn):
+    """规则对话式管理（第二步）：人工确认后把 AI 理解的规则写入规则库。
+    支持：数值阈值（key/value）、忽略词、状态词映射、列名映射、文本要求（存 requirements 列表）。"""
+    draft = payload.draft or {}
+    typ = str(draft.get("type") or "")
+    rules = rules_mod.load_rules()
+    applied = {"type": typ, "title": draft.get("title", ""), "detail": ""}
+    if typ == "number" or (typ in ("rule", "数值阈值") and draft.get("key")):
+        key = str(draft.get("key") or "")
+        val = draft.get("value")
+        if key and val is not None and key in rules_mod.DEFAULT_RULES:
+            try:
+                rules[key] = int(float(val))
+                applied["detail"] = f"{key} = {rules[key]}"
+            except (TypeError, ValueError):
+                raise HTTPException(400, f"字段 {key} 的数值无效")
+    elif typ in ("status_map", "状态词映射"):
+        for src, dst in (draft.get("value") or {}).items():
+            s, d = str(src).strip(), str(dst).strip()
+            if s and d and d in rules_mod.STATUS_VALUES:
+                rules.setdefault("status_words", {})[s] = d
+        applied["detail"] = f"状态词映射 {json.dumps(draft.get('value') or {}, ensure_ascii=False)}"
+    elif typ in ("column_map", "列名映射"):
+        for src, dst in (draft.get("value") or {}).items():
+            s, d = str(src).strip(), str(dst).strip()
+            if s and d and d in rules_mod.FIELD_NAMES:
+                rules.setdefault("column_aliases", {})[s] = d
+        applied["detail"] = f"列名映射 {json.dumps(draft.get('value') or {}, ensure_ascii=False)}"
+    elif typ in ("ignore", "忽略词"):
+        for w in (draft.get("value") or []):
+            w = str(w).strip()
+            if w and w not in rules.setdefault("ignore_keywords", []):
+                rules["ignore_keywords"].append(w)
+        applied["detail"] = f"忽略词 {rules['ignore_keywords']}"
+    elif typ in ("requirement", "文本要求"):
+        # 文本要求：作为给 AI 的「工作要求」存 requirements（后续 AI 生成时注入）
+        reqs = rules.setdefault("requirements", [])
+        title = str(draft.get("title") or "").strip()
+        desc = str(draft.get("description") or "").strip()
+        if title and desc and all(r.get("title") != title for r in reqs):
+            reqs.append({"title": title, "description": desc,
+                         "scope": draft.get("scope") or "全部",
+                         "applies_to": draft.get("applies_to") or "全部"})
+        applied["detail"] = f"工作要求「{title}」已加入（共 {len(reqs)} 条）"
+    else:
+        raise HTTPException(400, f"暂不支持该规则类型: {typ}")
+    rules_mod.save_rules(rules)
+    _recompute_all()
+    return {"ok": True, "rules": rules, "applied": applied,
+            "note": "已确认并写入规则库"}
 
 
 @app.get("/api/rules/export")
@@ -568,6 +1231,33 @@ def save_ai_config(payload: AiConfigIn):
             "note": "已保存模型与接口配置（仅本地 config/keys.json）"}
 
 
+class PromptsSaveIn(BaseModel):
+    overrides: Dict
+
+
+@app.get("/api/settings/prompts")
+def get_prompts():
+    """提示词管理：默认值 + 用户覆盖 + 占位符说明 + 示例。"""
+    from pmo_report import prompts as prompts_mod
+    return prompts_mod.prompts_status()
+
+
+@app.post("/api/settings/prompts")
+def save_prompts(payload: PromptsSaveIn):
+    """保存提示词覆盖（面板可编辑调试，本地 config/prompts.json）。"""
+    from pmo_report import prompts as prompts_mod
+    prompts_mod.save_prompts(payload.overrides or {})
+    return {"ok": True, "items": prompts_mod.prompts_status()["items"],
+            "note": "已保存提示词（本地 config/prompts.json，之后生成/提炼/模板解析立即生效）"}
+
+
+@app.post("/api/settings/prompts/reset")
+def reset_prompts():
+    from pmo_report import prompts as prompts_mod
+    prompts_mod.reset_prompts()
+    return {"ok": True, "items": prompts_mod.prompts_status()["items"], "note": "已恢复全部默认提示词"}
+
+
 # ================= 模板 =================
 @app.get("/api/template")
 def get_template():
@@ -586,6 +1276,8 @@ def get_template():
             "kpi_options": KPI_OPTIONS,
             "presets": PRESET_TEMPLATES,
             "placeholder_docs": report_mod.PLACEHOLDER_DOC,
+        "ai_scopes": report_mod.AI_SCOPE_OPTIONS,
+            "ai_scopes": report_mod.AI_SCOPE_OPTIONS,
             "html": "",
             "is_custom": True,
         }
@@ -620,6 +1312,32 @@ def save_template(payload: TemplateIn):
 def reset_template():
     ReportGenerator.reset_template()
     return {"ok": True}
+
+
+class CustomBlockIn(BaseModel):
+    name: str
+    definition: Dict
+
+
+@app.get("/api/custom_blocks")
+def get_custom_blocks():
+    """自定义块库（AI 提示词块/公式计算块，本地保存复用）。"""
+    from pmo_report import custom_blocks
+    return {"blocks": custom_blocks.load_blocks()}
+
+
+@app.post("/api/custom_blocks")
+def save_custom_block(payload: CustomBlockIn):
+    from pmo_report import custom_blocks
+    blocks = custom_blocks.save_block(payload.name, payload.definition)
+    return {"ok": True, "blocks": blocks, "note": f"已保存自定义块「{payload.name}」"}
+
+
+@app.post("/api/custom_blocks/delete")
+def delete_custom_block(payload: RenameIn):
+    from pmo_report import custom_blocks
+    blocks = custom_blocks.delete_block(payload.name)
+    return {"ok": True, "blocks": blocks, "note": "已删除"}
 
 
 @app.post("/api/template/parse")
@@ -830,20 +1548,61 @@ def list_history():
     if not os.path.isdir(HISTORY_DIR):
         return {"items": []}
     stats_names = _history_stats_names()
-    file_to_project = {e.get("file", ""): e.get("project", "") for e in _load_stats_history()}
+    meta = {e.get("file", ""): e for e in _load_stats_history()}
     items = []
     for fn in sorted(os.listdir(HISTORY_DIR)):
         if fn.endswith((".md", ".html", ".txt")):
             full = os.path.join(HISTORY_DIR, fn)
+            m = meta.get(fn) or {}
             items.append({
                 "name": fn,
                 "size": os.path.getsize(full),
                 "mtime": datetime.fromtimestamp(os.path.getmtime(full)).strftime("%Y-%m-%d %H:%M"),
                 "has_stats": fn in stats_names,          # 环比徽标
-                "project": file_to_project.get(fn, ""),  # 所属项目（供前端分组）
+                "project": m.get("project", ""),         # 所属项目（供前端分组）
+                "rtype": m.get("rtype", ""),             # day/week：文稿库分类
+                "period": m.get("period", ""),           # 周期/日期（归档）
             })
     items.reverse()
     return {"items": items}
+
+
+class SummarizeIn(BaseModel):
+    names: List[str] = []
+
+
+@app.post("/api/documents/summarize")
+def summarize_documents(payload: SummarizeIn):
+    """文稿库多选汇总：把多份已保存的日报/周报统计合并生成一份汇总稿（确定性，不调 AI）。"""
+    from pmo_report.engine import ProjectStats
+    from pmo_report.models import Project
+    wanted = set(payload.names)
+    entries = [e for e in _load_stats_history() if e.get("file") in wanted]
+    if not entries:
+        raise HTTPException(400, "未找到可汇总的文稿（需先保存且带统计快照）")
+    def s(e): return e.get("stats") or {}
+    total = sum(s(e).get("total", 0) for e in entries)
+    done = sum(s(e).get("done", 0) for e in entries)
+    in_prog = sum(s(e).get("in_progress", 0) for e in entries)
+    not_started = sum(s(e).get("not_started", 0) for e in entries)
+    delayed = sum(s(e).get("delayed", 0) for e in entries)
+    risk = sum(s(e).get("risk", 0) for e in entries)
+    weights = [s(e).get("total", 0) for e in entries]
+    wsum = sum(weights)
+    st = ProjectStats(project=Project(name=f"多文稿汇总（{len(entries)} 份）", period=""))
+    st.total_tasks = total
+    st.done_count = done
+    st.in_progress_count = in_prog
+    st.not_started_count = not_started
+    st.delayed_count = delayed
+    st.risk_count = risk
+    st.completion_rate = round(sum(s(e).get("completion_rate", 0) * w for e, w in zip(entries, weights)) / wsum, 1) if wsum else 0
+    st.avg_progress = round(sum(s(e).get("avg_progress", 0) * w for e, w in zip(entries, weights)) / wsum, 1) if wsum else 0
+    gen = ReportGenerator()
+    result = gen.render(st, use_ai=False, rules=load_rules())
+    return {"ok": True, "report": result["report_html"], "report_text": result["report_text"],
+            "project": st.project.name, "n": len(entries),
+            "names": [e.get("file", "") for e in entries]}
 
 
 @app.get("/api/history/{name}")
@@ -926,8 +1685,12 @@ def api_save_report(payload: SaveReportIn):
     safe = os.path.basename(payload.filename)
     with open(os.path.join(HISTORY_DIR, safe), "w", encoding="utf-8") as f:
         f.write(payload.content)
-    # 写入环比历史（只存汇总数字+任务进度快照；project 供环比匹配）
+    # 写入环比历史（只存汇总数字+任务进度快照；project 供环比匹配；rtype/period 供文稿库分类）
     if payload.stats:
         proj = (payload.stats.get("project_name") or safe).strip()
-        _append_stats_history(proj, safe, _compact_stats(payload.stats))
+        rtype = (payload.report_type or "").strip()
+        if rtype not in ("day", "week", "other"):
+            rtype = ""
+        _append_stats_history(proj, safe, _compact_stats(payload.stats),
+                              rtype=rtype, period=(payload.period or "").strip())
     return {"ok": True, "name": safe}

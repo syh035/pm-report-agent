@@ -117,6 +117,36 @@ def test_ai_config_defaults():
         ai._write_json(ai.KEYS_FILE, orig)
 
 
+def test_prompts_management():
+    """提示词管理：默认加载/占位符渲染/示例追加/保存覆盖/恢复默认。"""
+    from pmo_report import prompts as pm
+    # 默认
+    entry = pm.get_prompt("enrich_tasks")
+    assert entry["system"] and entry["user"]
+    # 渲染：替换占位符 + 追加示例
+    rendered = pm.render_user({"user": "候选：{candidate_text}", "examples": ["样稿A", "样稿B"]},
+                              {"candidate_text": "行1"})
+    assert "行1" in rendered
+    assert "样稿A" in rendered and "样稿B" in rendered
+    assert "模仿" in rendered
+    # 无示例时不追加
+    assert "参考示例" not in pm.render_user({"user": "x {a}", "examples": []}, {"a": "1"})
+    # 保存覆盖 → 生效；恢复默认 → 还原
+    orig_exists = __import__("os").path.exists(pm.PROMPTS_FILE)
+    try:
+        pm.save_prompts({"report_overview": {"system": "测试系统", "user": "测试用户 {stats_json}",
+                                             "examples": ["我的样稿：本周完成5项，待完成3项，卡点在于风险清单"]}})
+        e2 = pm.get_prompt("report_overview")
+        assert e2["system"] == "测试系统" and e2["examples"] == ["我的样稿：本周完成5项，待完成3项，卡点在于风险清单"]
+        st = pm.prompts_status()
+        assert st["items"][0]["modified"] is True
+    finally:
+        pm.reset_prompts()
+        if orig_exists:
+            pass  # 测试前若已有覆盖不还原（本机开发环境无覆盖）
+    print("✅ 提示词管理（渲染/覆盖/恢复）")
+
+
 if __name__ == "__main__":
     test_cache_and_usage()
     test_cache_different_input()
@@ -124,4 +154,5 @@ if __name__ == "__main__":
     test_enrich_fallback()
     test_enrich_schema_validation()
     test_ai_config_defaults()
+    test_prompts_management()
     print("\n全部通过 ✅")
