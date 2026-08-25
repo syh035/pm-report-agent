@@ -32,7 +32,7 @@
 <body>
 <div class="sub" style="display:flex;justify-content:space-between;align-items:center;">
   <div><h1>⚙️ 规则库</h1><div>规则阈值 / 忽略词 / 列名 / 状态词映射 + AI 工作要求 · 支持对话式添加</div></div>
-  <a class="back" href="/libraries.html" target="_blank">← 返回数据库中心</a>
+  <a class="back" href="/libraries.html">← 返回数据库中心</a>
 </div>
 
 <div class="card">
@@ -61,20 +61,45 @@ let rules = {}, meta = {}, pendingDraft = null;
 async function load(){
   const d = await (await fetch('/api/rules')).json();
   rules = d.rules||{}; meta = d.meta||{};
-  // 工作要求
+  // 工作要求（可删除）
   const reqs = rules.requirements||[];
-  $('reqList').innerHTML = reqs.length ? reqs.map(r=>`
+  $('reqList').innerHTML = reqs.length ? reqs.map((r,ri)=>`
     <div class="req"><b>${esc(r.title)}</b> <span class="tag">${esc(r.scope||'全部')}</span><span class="tag">${esc(r.applies_to||'全部')}</span>
-      <div>${esc(r.description)}</div></div>`).join('')
-    : '<div style="color:var(--muted);font-size:13px;">暂无工作要求 —— 用上方对话框添加，或在主面板「规则配置」页管理</div>';
-  // 规则参数
+      <div>${esc(r.description)}</div>
+      <div style="margin-top:4px;"><button class="btn btn-outline" style="font-size:11px;padding:2px 8px;" onclick="delRequirement(${ri})">🗑 删除该要求</button></div></div>`).join('')
+    : '<div style="color:var(--muted);font-size:13px;">暂无工作要求 —— 用上方对话框添加</div>';
+  // 规则参数（可点击数值编辑）
   const kvs = Object.entries(rules).filter(([k])=>!['requirements','ignore_keywords','column_aliases','status_words'].includes(k));
   $('rulesList').innerHTML = kvs.map(([k,v])=>{
     const m = meta[k]||{};
-    return `<div class="kv"><span>${esc(m.label||k)} <span style="font-size:11px;color:var(--muted)">${esc(m.desc||'')}</span></span><span class="v">${esc(v)}</span></div>`;
+    return `<div class="kv"><span>${esc(m.label||k)} <span style="font-size:11px;color:var(--muted)">${esc(m.desc||'')}</span></span>
+      <span class="v" style="cursor:pointer;" onclick="editRule('${k}')" title="点击修改">${esc(v)} ✏️</span></div>`;
   }).join('') + (rules.ignore_keywords?.length?`<div class="kv"><span>忽略词</span><span class="v">${esc(rules.ignore_keywords.join('、'))}</span></div>`:'')
     + (Object.keys(rules.column_aliases||{}).length?`<div class="kv"><span>列名映射</span><span class="v">${esc(JSON.stringify(rules.column_aliases))}</span></div>`:'')
     + (Object.keys(rules.status_words||{}).length?`<div class="kv"><span>状态词映射</span><span class="v">${esc(JSON.stringify(rules.status_words))}</span></div>`:'');
+}
+function editRule(key){
+  const cur = rules[key];
+  const label = meta[key]?.label || key;
+  const v = prompt(`修改「${label}」的值（当前：${cur}）：`, cur);
+  if(v === null) return;
+  const num = Number(v);
+  if(isNaN(num)){ alert('请输入有效数值'); return; }
+  saveRulesPatch({[key]: num});
+}
+async function delRequirement(idx){
+  if(!confirm('删除这条工作要求？')) return;
+  const reqs = [...(rules.requirements||[])];
+  reqs.splice(idx,1);
+  saveRulesPatch({requirements: reqs});
+}
+async function saveRulesPatch(patch){
+  const res = await fetch('/api/rules',{method:'POST',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({...rules, ...patch})});
+  const d = await res.json();
+  if(!res.ok){ alert('保存失败: '+(d.detail||JSON.stringify(d))); return; }
+  alert('✅ 已保存并写入历史');
+  load();
 }
 async function converse(){
   const instr = $('ruleIn').value.trim();

@@ -1,0 +1,160 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>⚙️ AI 配置库 · PM Report Agent</title>
+<style>
+  :root { --primary:#4A6CF7; --bg:#F7F8FA; --card:#fff; --border:#E4E7EC; --text:#2D3142; --muted:#6B6B80; --danger:#C0504D; --success:#5CB85C; }
+  * { margin:0; padding:0; box-sizing:border-box; }
+  body { font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',system-ui,sans-serif; background:var(--bg); color:var(--text); line-height:1.6; padding:24px 32px; }
+  h1 { font-size:19px; margin-bottom:4px; }
+  .sub { font-size:13px; color:var(--muted); margin-bottom:18px; }
+  .back { text-decoration:none; color:var(--primary); font-size:13px; float:right; }
+  .card { background:var(--card); border:1px solid var(--border); border-radius:12px; padding:18px; margin-bottom:16px; }
+  .card h3 { font-size:14px; margin-bottom:10px; }
+  .field { margin-bottom:12px; }
+  .field label { display:block; font-size:12px; color:var(--muted); margin-bottom:4px; }
+  input[type=password], input[type=text], select { width:100%; max-width:420px; border:1px solid var(--border); border-radius:8px; padding:8px 12px; font-size:13px; }
+  .row { display:flex; gap:8px; align-items:center; flex-wrap:wrap; }
+  .btn { border:none; border-radius:8px; padding:7px 16px; font-size:13px; cursor:pointer; }
+  .btn-primary { background:var(--primary); color:#fff; }
+  .btn-outline { background:#fff; border:1px solid var(--border); color:var(--text); }
+  .btn-danger { background:var(--danger); color:#fff; }
+  .msg { font-size:12px; margin-top:8px; }
+  .msg.ok { color:var(--success); } .msg.err { color:var(--danger); }
+  .kpis { display:flex; gap:14px; flex-wrap:wrap; margin-bottom:14px; }
+  .kpi { background:var(--bg); border:1px solid var(--border); border-radius:10px; padding:12px 18px; min-width:120px; }
+  .kpi b { font-size:18px; color:var(--primary); display:block; }
+  .kpi span { font-size:12px; color:var(--muted); }
+  table { width:100%; border-collapse:collapse; }
+  th { background:#F0F2F5; text-align:left; font-size:11px; padding:7px 10px; color:var(--muted); }
+  td { border-top:1px solid var(--border); padding:6px 10px; font-size:12px; }
+  .hint { font-size:11px; color:var(--muted); margin-top:4px; }
+</style>
+</head>
+<body>
+<div class="sub" style="display:flex;justify-content:space-between;align-items:center;">
+  <div><h1>⚙️ AI 配置库</h1><div>API Key / 模型 / 接口地址 / Token 用量（仅本地 config/，gitignored）</div></div>
+  <a class="back" href="/libraries.html">← 返回数据库中心</a>
+</div>
+
+<div class="card">
+  <h3>🔑 API Key</h3>
+  <div class="field">
+    <label>DeepSeek API Key（sk-...）</label>
+    <div class="row">
+      <input type="password" id="apiKeyInput" placeholder="sk-..." autocomplete="off" spellcheck="false" style="max-width:340px">
+      <button class="btn btn-primary" onclick="saveApiKey()">保存到本地</button>
+      <button class="btn btn-outline" onclick="testApiKey()">测试连接</button>
+      <button class="btn btn-danger" onclick="clearApiKey()">清除本地 Key</button>
+    </div>
+    <div class="hint" id="keyStatus"></div>
+  </div>
+  <div class="msg" id="keyMsg"></div>
+</div>
+
+<div class="card">
+  <h3>🧠 模型与接口</h3>
+  <div class="field">
+    <label>模型</label>
+    <select id="aiModelSelect"></select>
+    <div class="hint">deepseek-chat 通用性价比高；deepseek-reasoner 推理增强、更贵更慢</div>
+  </div>
+  <div class="field">
+    <label>API 地址（Base URL，兼容 OpenAI 格式；留空用官方地址）</label>
+    <input type="text" id="aiBaseUrl" placeholder="https://api.deepseek.com">
+  </div>
+  <div class="row">
+    <button class="btn btn-primary" onclick="saveAiConfig()">保存配置</button>
+    <button class="btn btn-outline" onclick="loadAiConfig()">重新载入</button>
+    <span class="msg" id="aiCfgMsg"></span>
+  </div>
+</div>
+
+<div class="card">
+  <h3>🔢 Token 用量</h3>
+  <div class="kpis" id="tokenKpis"></div>
+  <div class="row" style="margin-bottom:10px;">
+    <button class="btn btn-outline" onclick="loadTokenUsage()">刷新</button>
+    <button class="btn btn-danger" onclick="clearTokenUsage()">清空统计</button>
+    <span class="msg" id="tokenMsg"></span>
+  </div>
+  <table><thead><tr><th>时间</th><th>用途</th><th>输入</th><th>输出</th><th>缓存</th></tr></thead>
+    <tbody id="tokenEntries"></tbody></table>
+</div>
+
+<script>
+const $ = id => document.getElementById(id);
+function esc(s){ return String(s??'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
+async function loadKeyStatus(){
+  try{
+    const d = await (await fetch('/api/settings/key')).json();
+    const s = d.status || {};
+    $('keyStatus').innerHTML = s.has_key
+      ? `✅ 当前已配置：<code style="background:#F0F2F5;padding:1px 6px;border-radius:4px;">${esc(s.masked)}</code>（来源：${s.source==='env'?'环境变量（优先）':'本地配置文件 config/keys.json'}）`
+      : '⚠️ 尚未配置 Key —— AI 增强将自动回退为规则引擎文案';
+  }catch(e){ $('keyStatus').textContent='获取状态失败'; }
+}
+async function saveApiKey(){
+  const v = $('apiKeyInput').value.trim();
+  if(!v){ alert('请输入 API Key'); return; }
+  $('keyMsg').className='msg'; $('keyMsg').textContent='保存中...';
+  const res = await fetch('/api/settings/key',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({api_key:v})});
+  const d = await res.json();
+  if(!res.ok){ $('keyMsg').className='msg err'; $('keyMsg').textContent=d.detail||'保存失败'; return; }
+  $('apiKeyInput').value='';
+  $('keyMsg').className='msg ok'; $('keyMsg').textContent=d.note||'已保存';
+  loadKeyStatus();
+}
+async function clearApiKey(){
+  if(!confirm('确定清除本地保存的 API Key？')) return;
+  const d = await (await fetch('/api/settings/key/delete',{method:'POST'})).json();
+  $('keyMsg').className='msg ok'; $('keyMsg').textContent=d.note||'已清除';
+  loadKeyStatus();
+}
+async function testApiKey(){
+  const v = $('apiKeyInput').value.trim();
+  $('keyMsg').className='msg'; $('keyMsg').textContent='测试中（可能需要几秒）...';
+  const res = await fetch('/api/settings/key/test',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({api_key:v||null})});
+  const d = await res.json();
+  $('keyMsg').className = d.ok?'msg ok':'msg err';
+  $('keyMsg').textContent = d.ok?('✅ 连接成功：'+esc(d.reply)):('❌ 连接失败：'+esc(d.error||'未知错误'));
+}
+async function loadAiConfig(){
+  const d = await (await fetch('/api/settings/ai')).json();
+  const cfg = d.config || {};
+  $('aiModelSelect').innerHTML = (d.models||[]).map(m=>
+    `<option value="${m.value}" ${cfg.model===m.value?'selected':''}>${m.label}</option>`).join('');
+  $('aiBaseUrl').value = (cfg.base_url && cfg.base_url!=='https://api.deepseek.com') ? cfg.base_url : '';
+}
+async function saveAiConfig(){
+  const body = {model: $('aiModelSelect').value, base_url: $('aiBaseUrl').value.trim()};
+  $('aiCfgMsg').textContent='保存中...';
+  const res = await fetch('/api/settings/ai',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
+  const d = await res.json();
+  $('aiCfgMsg').className = res.ok?'msg ok':'msg err';
+  $('aiCfgMsg').textContent = res.ok ? (d.note||'已保存') : (d.detail||'保存失败');
+}
+const SITE_LABELS = {report:'周报综述', enrich:'文本提炼', template:'模板解析', ai:'其它'};
+async function loadTokenUsage(){
+  const d = await (await fetch('/api/settings/tokens')).json();
+  const cost = (d.total_in/1e6*1 + d.total_out/1e6*2).toFixed(4);
+  $('tokenKpis').innerHTML = [
+    ['调用次数', d.calls], ['输入 tokens', d.total_in], ['输出 tokens', d.total_out],
+    ['缓存命中', d.cache_hits], ['估算费用', '¥'+cost],
+  ].map(k=>`<div class="kpi"><b>${k[1]}</b><span>${k[0]}</span></div>`).join('');
+  $('tokenEntries').innerHTML = d.entries && d.entries.length ? d.entries.map(e=>
+    `<tr><td>${esc(e.ts||'')}</td><td>${esc(SITE_LABELS[e.site]||e.site||'')}</td><td>${e.cached?'0':e.tokens_in||0}</td><td>${e.cached?'0':e.tokens_out||0}</td><td>${e.cached?'✅':'—'}</td></tr>`).join('')
+    : '<tr><td colspan="5" style="color:var(--muted);padding:12px;">暂无记录（AI 未调用过，或尚未配置 Key）</td></tr>';
+}
+async function clearTokenUsage(){
+  if(!confirm('确定清空 Token 用量统计？')) return;
+  await fetch('/api/settings/tokens/clear',{method:'POST'});
+  $('tokenMsg').textContent='已清空';
+  loadTokenUsage();
+}
+loadKeyStatus(); loadAiConfig(); loadTokenUsage();
+</script>
+</body>
+</html>

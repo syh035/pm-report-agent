@@ -35,13 +35,13 @@
 <body>
 <div class="sub" style="display:flex;justify-content:space-between;align-items:center;">
   <div><h1>📋 模板库</h1><div>当前模板 + 版本历史（按日期日历）· 在「模板」面板保存新版本后这里可回溯</div></div>
-  <a class="back" href="/libraries.html" target="_blank">← 返回数据库中心</a>
+  <a class="back" href="/libraries.html">← 返回数据库中心</a>
 </div>
 <div class="layout">
   <div class="cal-panel">
     <div class="cal-head">
       <button onclick="calMove(-1)">‹</button>
-      <span class="ym" id="calYM"></span>
+      <span class="ym" id="calYM" title="点击选择年份/月份"></span>
       <button onclick="calMove(1)">›</button>
     </div>
     <div class="cal-grid" id="calGrid"></div>
@@ -53,6 +53,7 @@
     <div id="tplList"></div>
   </div>
 </div>
+<script src="/lib/cal.js"></script>
 <script>
 const $ = id => document.getElementById(id);
 let curYear=new Date().getFullYear(), curMonth=new Date().getMonth()+1;
@@ -68,6 +69,7 @@ async function load(){
   hist = d.items||[];
   byDate = {};
   for(const it of hist){ const day=(it.ts||'').slice(0,10); (byDate[day]=byDate[day]||[]).push(it); }
+  bindCalPicker($('calYM'), (y,m)=>{ curYear=y; curMonth=m; renderCal(); });
   renderCal();
   const tk = `${curYear}-${String(curMonth).padStart(2,'0')}-${String(new Date().getDate()).padStart(2,'0')}`;
   selectDate(byDate[tk]?tk:Object.keys(byDate).sort().pop()||'');

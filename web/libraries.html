@@ -29,18 +29,17 @@
     <h1>📚 数据库中心</h1>
     <div class="sub">全部数据库 / 规则库 / 配置库，点击卡片在<b>新窗口</b>打开查看</div>
   </div>
-  <a class="back" href="/" target="_blank">← 返回主面板</a>
+  <a class="back" href="/">← 返回主面板</a>
 </div>
 <div class="grid" id="libGrid"></div>
 <div class="hint">💡 每个库独立页面，可多开对比；「原始数据库」按日期（日历）分类，有数据的日期可点击查看当天提交的资料。</div>
 <script>
 const LIBS = [
-  { key:'sources', icon:'📦', name:'原始数据库', desc:'上传的原始文件，按日期(日历)+资料分类归档，可下载原文', url:'/lib/sources.html', badge:'日历' },
-  { key:'items',   icon:'🗂', name:'分类数据仓', desc:'任务/风险/里程碑/指标/决策等分类数据（SQLite）', url:'/lib/items.html', badge:'' },
+  { key:'sources', icon:'📦', name:'原始数据库', desc:'上传的原始文件，按日期(日历)+资料分类归档，可下载原文；支持删除/增添/撤销', url:'/lib/sources.html', badge:'日历' },
   { key:'reports', icon:'📄', name:'文稿库', desc:'生成/保存的日周报，按日期归档，可搜索、汇总、导出', url:'/lib/reports.html', badge:'日历' },
-  { key:'templates', icon:'📋', name:'模板库', desc:'周报模板（含自定义模块/占位符），上传与编辑', url:'/lib/templates.html', badge:'日历' },
-  { key:'rules',   icon:'⚙️', name:'规则库', desc:'规则阈值/忽略词/列名/状态词映射 + AI 工作要求（对话式添加）', url:'/lib/rules.html', badge:'对话' },
-  { key:'blocks',  icon:'🧩', name:'自定义 Block 库', desc:'AI 提示词块 / 公式计算块，可保存复用', url:'/lib/blocks.html', badge:'' },
+  { key:'templates', icon:'📋', name:'模板库', desc:'周报模板（上传文档+AI解析），版本历史日历浏览', url:'/lib/templates.html', badge:'日历' },
+  { key:'rules',   icon:'⚙️', name:'规则库', desc:'规则阈值/忽略词/列名/状态词映射 + AI 工作要求（对话式添加、参数可改）', url:'/lib/rules.html', badge:'对话' },
+  { key:'ai',      icon:'⚙️', name:'AI 配置库', desc:'API Key / 模型 / 接口地址 / Token 用量', url:'/lib/ai.html', badge:'' },
   { key:'prompts', icon:'💬', name:'提示词库', desc:'全部 AI 提示词（system/user/few-shot），面板可编辑', url:'/lib/prompts.html', badge:'' },
   { key:'tokens',  icon:'🔢', name:'Token 用量', desc:'AI 调用 Token 统计与缓存命中情况', url:'/lib/tokens.html', badge:'' },
 ];
@@ -48,14 +47,12 @@ function esc(s){ return String(s??'').replace(/&/g,'&amp;').replace(/</g,'&lt;')
 async function loadCounts(){
   const counts = {};
   try{
-    const [sources, items, history, rules] = await Promise.all([
+    const [sources, history, rules] = await Promise.all([
       fetch('/api/sources').then(r=>r.json()).catch(()=>({items:[]})),
-      fetch('/api/items?limit=1').then(r=>r.json()).catch(()=>({items:[]})),
       fetch('/api/history').then(r=>r.json()).catch(()=>({items:[]})),
       fetch('/api/rules').then(r=>r.json()).catch(()=>({rules:{}})),
     ]);
     counts.sources = (sources.items||[]).length;
-    counts.items = Object.values(sources.summary||{}).reduce((a,b)=>a+b,0) || '—';
     counts.reports = (history.items||history||[]).length || '—';
     counts.rules = Object.keys(rules.rules||{}).length;
     counts.templates = 1;

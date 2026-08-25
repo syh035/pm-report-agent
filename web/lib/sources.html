@@ -34,28 +34,43 @@
   .item a { color:var(--primary); text-decoration:none; font-size:12px; }
   .empty-tip { color:var(--muted); font-size:13px; padding:20px 6px; }
   .group-tag { display:inline-block; background:#F0F2F5; border-radius:8px; padding:1px 8px; font-size:11px; color:var(--muted); }
+  .op-btn { background:#EEF2FF; border:none; color:var(--primary); border-radius:8px; padding:4px 12px; font-size:12px; cursor:pointer; }
+  .op-btn:hover { background:#DDE5FF; }
+  .op-btn.danger { background:#FDEBEA; color:var(--danger,#C0504D); }
+  .op-item { display:flex; align-items:center; gap:8px; padding:6px 4px; border-bottom:1px dashed var(--border); font-size:12px; }
+  .op-item .tag { font-size:10px; border-radius:6px; padding:1px 7px; color:#fff; }
+  .op-item .tag.add { background:#4A7A1E; } .op-item .tag.delete { background:#A33A37; } .op-item .tag.restore { background:#0E7490; }
 </style>
 </head>
 <body>
 <div class="sub" style="display:flex;justify-content:space-between;align-items:center;">
   <div><h1>📦 原始数据库</h1><div>上传的原始文件 · 按日期分类（日历）· 点击有数据的日期查看当天提交的资料</div></div>
-  <a class="back" href="/libraries.html" target="_blank">← 返回数据库中心</a>
+  <a class="back" href="/libraries.html">← 返回数据库中心</a>
 </div>
 <div class="layout">
   <div class="cal-panel">
     <div class="cal-head">
       <button onclick="calMove(-1)">‹</button>
-      <span class="ym" id="calYM"></span>
+      <span class="ym" id="calYM" title="点击选择年份/月份"></span>
       <button onclick="calMove(1)">›</button>
     </div>
     <div class="cal-grid" id="calGrid"></div>
-    <div style="font-size:11px;color:var(--muted);margin-top:10px;">● 有数据的日期可点击，查看当天提交的资料</div>
+    <div style="font-size:11px;color:var(--muted);margin-top:10px;">● 有数据的日期可点击，查看当天提交的资料；点击「2026 年 8 月」可快速跳转年份/月份</div>
   </div>
   <div class="list-panel">
-    <h3 style="font-size:14px;margin-bottom:10px;" id="listTitle">🗓 当天提交的资料</h3>
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px;flex-wrap:wrap;gap:6px;">
+      <h3 style="font-size:14px;" id="listTitle">🗓 当天提交的资料</h3>
+      <div style="display:flex;gap:6px;flex-wrap:wrap;">
+        <button class="op-btn" onclick="addSource()">➕ 增添</button>
+        <button class="op-btn" onclick="undoSource()">↩️ 撤销上次</button>
+        <button class="op-btn" onclick="showOps()">📜 修改记录</button>
+      </div>
+    </div>
     <div id="dayList"></div>
+    <div id="opsBox" style="display:none;margin-top:12px;border-top:1px solid var(--border);padding-top:10px;"></div>
   </div>
 </div>
+<script src="/lib/cal.js"></script>
 <script>
 const $ = id => document.getElementById(id);
 let curYear = new Date().getFullYear(), curMonth = new Date().getMonth()+1;
@@ -71,6 +86,7 @@ async function loadData(){
     const day = (it.uploaded_at||'').slice(0,10);
     (byDate[day] = byDate[day]||[]).push(it);
   }
+  bindCalPicker($('calYM'), (y,m)=>{ curYear=y; curMonth=m; renderCal(); });
   renderCal(); 
   const today = new Date();
   const todayKey = `${today.getFullYear()}-${String(today.getMonth()+1).padStart(2,'0')}-${String(today.getDate()).padStart(2,'0')}`;
@@ -110,7 +126,55 @@ function selectDate(key){
       <span class="meta">${esc((it.uploaded_at||'').slice(5,16))}</span>
       <a href="#" onclick="event.preventDefault();viewSource('${it.id}')">查看</a>
       <a href="/api/sources/${it.id}/download" download>⬇</a>
+      <a href="#" style="color:var(--danger,#C0504D)" onclick="event.preventDefault();delSource('${it.id}')">🗑</a>
     </div>`).join('');
+}
+async function delSource(sid){
+  const it = allItems.find(x=>x.id===sid);
+  if(!it) return;
+  if(!confirm(`删除源文件「${it.filename}」？（留痕可撤销）`)) return;
+  const res = await fetch('/api/sources/'+sid,{method:'DELETE'});
+  const d = await res.json();
+  if(!res.ok){ alert('删除失败: '+(d.detail||JSON.stringify(d))); return; }
+  alert(d.note||'已删除');
+  loadData();
+}
+async function addSource(){
+  const inp = document.createElement('input');
+  inp.type = 'file'; inp.multiple = true; inp.style.display='none';
+  inp.accept = '.xlsx,.xlsm,.csv,.docx,.pdf,.txt,.md,.html,.htm';
+  inp.onchange = async ()=>{
+    if(!inp.files.length) return;
+    const fd = new FormData();
+    for(const f of inp.files) fd.append('files', f);
+    const res = await fetch('/api/workspace/load',{method:'POST',body:fd});
+    const d = await res.json();
+    if(!res.ok){ alert('上传失败: '+(d.detail||JSON.stringify(d))); return; }
+    alert(`已增添 ${d.created?.length||0} 个资料${d.renamed?.length?`（${d.renamed.map(r=>r.old+'→'+r.new).join('、')}）`:''}`);
+    loadData();
+  };
+  document.body.appendChild(inp); inp.click(); inp.remove();
+}
+async function undoSource(){
+  if(!confirm('撤销最近一次原始库操作？（删除→恢复）')) return;
+  const res = await fetch('/api/sources/undo',{method:'POST'});
+  const d = await res.json();
+  if(!res.ok){ alert('撤销失败: '+(d.detail||JSON.stringify(d))); return; }
+  alert(d.note||'已撤销');
+  loadData();
+}
+async function showOps(){
+  const box = $('opsBox');
+  if(box.style.display === 'block'){ box.style.display='none'; return; }
+  const d = await (await fetch('/api/sources/ops')).json();
+  const items = d.items||[];
+  box.style.display = 'block';
+  box.innerHTML = `<b style="font-size:13px;">📜 修改记录（${items.length}）</b>` + (items.length ? items.map(o=>`
+    <div class="op-item">
+      <span class="tag ${o.op}">${o.op==='add'?'增添':o.op==='delete'?'删除':o.op==='restore'?'撤销':o.op}</span>
+      <span>${esc(o.filename||'(未知)')}</span>
+      <span style="color:var(--muted);margin-left:auto;">${esc((o.created_at||'').slice(5,16))}</span>
+    </div>`).join('') : '<div class="empty-tip">暂无操作记录</div>');
 }
 function esc(s){ return String(s??'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
 function viewSource(sid){

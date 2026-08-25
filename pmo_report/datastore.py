@@ -43,6 +43,10 @@ def _conn() -> sqlite3.Connection:
         source_id TEXT PRIMARY KEY, sections TEXT, updated_at TEXT)""")
     c.execute("""CREATE TABLE IF NOT EXISTS workspace(
         id INTEGER PRIMARY KEY CHECK(id=1), state TEXT, updated_at TEXT)""")
+    c.execute("""CREATE TABLE IF NOT EXISTS source_ops(
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        op TEXT, source_id TEXT, filename TEXT, payload TEXT,
+        created_at TEXT)""")
     c.commit()
     return c
 
@@ -104,9 +108,21 @@ def find_sources_by_name(filename: str) -> List[Dict]:
     return [dict(r) for r in rows]
 
 
-def delete_source(sid: str) -> None:
+def delete_source(sid: str, keep_snapshot: bool = True) -> None:
+    """删除源文件（含其板块/条目）。keep_snapshot=True 时把原文件移入 .trash/ 并记操作日志（可撤销）。"""
     src = get_source(sid)
-    if src:
+    snapshot = None
+    if src and os.path.exists(src.get("stored_path", "")):
+        if keep_snapshot:
+            # 快照：把文件复制到 .trash/ 供撤销
+            trash_dir = os.path.join(_data_dir(), "files", ".trash")
+            os.makedirs(trash_dir, exist_ok=True)
+            trash_path = os.path.join(trash_dir, f"{sid}_{os.path.basename(src['stored_path'])}")
+            try:
+                shutil.copyfile(src["stored_path"], trash_path)
+                snapshot = {"stored_path": src["stored_path"], "trash_path": trash_path}
+            except Exception:
+                snapshot = None
         try:
             if os.path.exists(src["stored_path"]):
                 os.remove(src["stored_path"])
@@ -116,6 +132,90 @@ def delete_source(sid: str) -> None:
         c.execute("DELETE FROM sources WHERE id=?", (sid,))
         c.execute("DELETE FROM items WHERE source_id=?", (sid,))
         c.execute("DELETE FROM dataset_sections WHERE source_id=?", (sid,))
+    if src and keep_snapshot:
+        log_source_op("delete", sid, src.get("filename", ""),
+                      {"snapshot": snapshot,
+                       "record": {k: src.get(k) for k in ("filename", "ext", "uploaded_at", "group_name")}})
+
+
+def restore_source(op_id: Optional[int] = None) -> Optional[Dict]:
+    """撤销最近一次原始库操作（删除→恢复）。成功返回恢复的信息。"""
+    op = None
+    if op_id is not None:
+        for o in list_source_ops(limit=500):
+            if o["id"] == op_id:
+                op = o
+                break
+    else:
+        op = latest_source_op()
+    if not op:
+        return None
+    payload = op.get("payload") or {}
+    if op["op"] == "delete":
+        # 撤销删除：把快照文件恢复为源记录
+        snap = payload.get("snapshot") or {}
+        rec = payload.get("record") or {}
+        trash_path = snap.get("trash_path")
+        if not trash_path or not os.path.exists(trash_path):
+            return {"ok": False, "reason": "快照文件已不存在（可能已被清理）"}
+        sid = op.get("source_id", "")
+        ext = rec.get("ext") or os.path.splitext(op.get("filename", ""))[1].lower()
+        month = datetime.now().strftime("%Y-%m")
+        dest_dir = os.path.join(_data_dir(), "files", month)
+        os.makedirs(dest_dir, exist_ok=True)
+        dest = os.path.join(dest_dir, f"{sid}_{os.path.basename(trash_path)}")
+        shutil.copyfile(trash_path, dest)
+        with _conn() as c:
+            c.execute(
+                "INSERT INTO sources(id,filename,stored_path,uploaded_at,ext,group_name) VALUES(?,?,?,?,?,?)",
+                (sid, op.get("filename", ""), dest,
+                 rec.get("uploaded_at") or datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                 ext, rec.get("group_name") or ""))
+        try:
+            if os.path.exists(trash_path):
+                os.remove(trash_path)
+        except Exception:
+            pass
+        log_source_op("restore", sid, op.get("filename", ""), {"from_op": op.get("id")})
+        return {"ok": True, "op": "restore", "filename": op.get("filename", ""), "source_id": sid}
+    if op["op"] == "restore":
+        return {"ok": False, "reason": "该操作已是撤销结果，不能再撤销（如需删除请手动操作）"}
+    return {"ok": False, "reason": f"不支持撤销操作类型 {op.get('op')}"}
+
+
+# ---------------- 原始库操作留痕（删除/增添/撤销，可回溯） ----------------
+def log_source_op(op: str, source_id: str, filename: str = "", payload: Optional[Dict] = None) -> int:
+    """记录一次原始库操作。op ∈ add/delete/restore。payload 存撤销所需快照。"""
+    with _conn() as c:
+        cur = c.execute(
+            "INSERT INTO source_ops(op,source_id,filename,payload,created_at) VALUES(?,?,?,?,?)",
+            (op, source_id or "", filename or "",
+             json.dumps(payload or {}, ensure_ascii=False),
+             datetime.now().strftime("%Y-%m-%d %H:%M:%S")),
+        )
+        return int(cur.lastrowid)
+
+
+def list_source_ops(limit: int = 100) -> List[Dict]:
+    """操作留痕（新→旧）。"""
+    with _conn() as c:
+        rows = c.execute(
+            "SELECT * FROM source_ops ORDER BY id DESC LIMIT ?", (limit,)).fetchall()
+    out = []
+    for r in rows:
+        d = dict(r)
+        try:
+            d["payload"] = json.loads(d["payload"] or "{}")
+        except Exception:
+            d["payload"] = {}
+        out.append(d)
+    return out
+
+
+def latest_source_op() -> Optional[Dict]:
+    """最近一次操作（供撤销）。"""
+    rows = list_source_ops(limit=1)
+    return rows[0] if rows else None
 
 
 def query_items(kind: Optional[str] = None, period: Optional[str] = None,

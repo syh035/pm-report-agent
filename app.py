@@ -426,6 +426,8 @@ async def workspace_load(files: List[UploadFile] = File(...),
                             continue
                         items.append((kind, name, {"section": sec["section"], "fields": r}, ""))
             datastore.add_items(source_id, items)
+            # 留痕：增添操作（上传成功记录）
+            datastore.log_source_op("add", source_id, fname, {"sheets": len(sheet_projects)})
     _persist_workspace()
     return {"ok": True, "created": created, "renamed": renamed,
             "is_dataset": is_dataset, "workspace": _workspace_view()}
@@ -559,6 +561,13 @@ def list_sources():
     return {"items": items, "summary": datastore.items_summary()}
 
 
+@app.get("/api/sources/ops")
+def list_source_ops_api(limit: int = 100):
+    """原始库操作留痕（删除/恢复记录，供查看修改历史）。"""
+    from pmo_report import datastore
+    return {"items": datastore.list_source_ops(limit=limit)}
+
+
 @app.get("/api/sources/{sid}")
 def source_detail(sid: str):
     """源数据详情：原文内容 + 解析任务（含 source_line 行级对照）。"""
@@ -610,6 +619,67 @@ def dataset_detail(sid: str):
     if sections is None:
         raise HTTPException(404, "该文件没有数据集板块（仅 Excel 多 sheet 数据集支持）")
     return {"source": src, "sections": sections}
+
+
+# ================= 原始库操作（删除/撤销/留痕） =================
+@app.delete("/api/sources/{sid}")
+def delete_source_api(sid: str):
+    """删除源文件（留痕 + 快照，可撤销）。同时清理工作区中关联 sheet。"""
+    from pmo_report import datastore
+    src = datastore.get_source(sid)
+    if not src:
+        raise HTTPException(404, "源数据不存在")
+    datastore.delete_source(sid, keep_snapshot=True)
+    # 工作区中引用该 source 的 sheet 一并移除
+    for sk in [s for s, sh in WORKSPACE["sheets"].items() if sh.get("source_id") == sid]:
+        del WORKSPACE["sheets"][sk]
+        for g in WORKSPACE["groups"].values():
+            if sk in g["sheets"]:
+                g["sheets"].remove(sk)
+    _persist_workspace()
+    return {"ok": True, "note": f"已删除「{src['filename']}」（留痕可撤销）", "filename": src["filename"]}
+
+
+@app.post("/api/sources/undo")
+def undo_source_op():
+    """撤销最近一次原始库操作（删除→恢复）。"""
+    from pmo_report import datastore
+    r = datastore.restore_source()
+    if not r:
+        raise HTTPException(400, "没有可撤销的操作")
+    if not r.get("ok"):
+        raise HTTPException(400, r.get("reason", "撤销失败"))
+    # 撤销删除恢复 sheet 需要重新解析源文件 → 重新加载工作区
+    try:
+        sid = r.get("source_id", "")
+        src = datastore.get_source(sid)
+        if src and os.path.exists(src.get("stored_path", "")):
+            tmp = src["stored_path"]
+            ext = os.path.splitext(src["filename"] or "")[1].lower()
+            if ext in (".xlsx", ".xlsm"):
+                from pmo_report.parsers import tabular_parser
+                sheet_projects = tabular_parser.parse_excel_all(tmp)
+            else:
+                sheet_projects = [(os.path.splitext(src["filename"] or "")[0], parse_file(tmp, period=""))]
+            from pmo_report.dataset import parse_dataset_sheets
+            try:
+                ds = parse_dataset_sheets(tmp)
+                datastore.save_dataset_sections(sid, ds)
+            except Exception:
+                ds = None
+            for name, proj in sheet_projects:
+                nk = _next_sid()
+                stats = analyze(proj, rules=load_rules())
+                WORKSPACE["sheets"][nk] = {
+                    "name": proj.name or name, "source": src.get("filename", ""),
+                    "source_id": sid, "project": proj, "_stats": stats.to_dict(),
+                    "parse_stats": proj.parse_stats, "rule_tasks": proj.rule_snapshot,
+                    "sheet_type": "dataset" if ds else "task",
+                }
+            _persist_workspace()
+    except Exception:
+        pass
+    return {"ok": True, "note": f"已撤销删除，恢复「{r.get('filename')}」", "filename": r.get("filename")}
 
 
 @app.get("/api/sources/{sid}/download")
@@ -1365,7 +1435,6 @@ def get_template():
             "kpi_options": KPI_OPTIONS,
             "presets": PRESET_TEMPLATES,
             "placeholder_docs": report_mod.PLACEHOLDER_DOC,
-        "ai_scopes": report_mod.AI_SCOPE_OPTIONS,
             "ai_scopes": report_mod.AI_SCOPE_OPTIONS,
             "html": "",
             "is_custom": True,
@@ -1493,7 +1562,10 @@ async def template_parse(file: UploadFile = File(...)):
         raise HTTPException(400, "无法从该文件抽取文本")
     try:
         html_template = ai_mod.parse_template_to_html(text)
-        return {"ok": True, "html": html_template, "source_text": text[:2000]}
+        # 解析成功后直接保存为当前 HTML 模板（模块化模板已移除，模板库走 HTML）
+        ReportGenerator.save_custom_template(html_template)
+        _append_template_history(fmt="html", html=html_template)
+        return {"ok": True, "html": html_template, "source_text": text[:2000], "saved": True}
     except Exception as e:
         return {"ok": False, "html": "", "source_text": text[:5000],
                 "error": f"AI 解析失败（{e}）。以下是抽取的原始文本，可手动整理。"}

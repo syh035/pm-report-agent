@@ -101,7 +101,7 @@
 <div class="topbar">
   <div><h1>PM Report Agent</h1><div class="sub">AI 项目管理智能周报 · 数据 → 统计 → 周报</div></div>
   <div class="row" style="gap:8px">
-    <button class="btn btn-primary" style="background:rgba(255,255,255,.2)" onclick="window.open('/libraries.html','_blank')">📚 数据库中心</button>
+    <button class="btn btn-primary" style="background:rgba(255,255,255,.2)" onclick="location.href='/libraries.html'">📚 数据库中心</button>
     <button class="btn btn-primary" style="background:rgba(255,255,255,.2)" onclick="openUpload()">上传资料</button>
     <button class="btn btn-primary" id="darkBtn" style="background:rgba(255,255,255,.2);font-size:14px;padding:5px 10px" onclick="toggleDark()" title="切换深色模式">🌙</button>
   </div>
@@ -225,34 +225,20 @@
     <!-- 模板面板 -->
     <div class="panel" id="panel-template">
       <div class="card">
-        <h2>可视化模板设计器</h2>
+        <h2>模板库（上传模板文档 + AI 按模板生成）</h2>
         <p style="font-size:12px;color:var(--muted);margin-bottom:12px;">
-          从左侧模块库拖入模块，画布中可拖动排序、编辑内容。数据类模块自动绑定当前统计。
+          上传周报模板文档（Word/PDF/HTML/txt）→ AI 解析成模板；生成时 AI 严格按模板章节结构、从数据集/源文件抓真实数据。
+          模板版本历史与日历浏览在「📚 数据库中心 → 模板库」。
         </p>
-        <div class="row" style="margin-bottom:12px;">
+        <div class="row" style="margin-bottom:12px;flex-wrap:wrap;">
           <input type="file" id="templateFile" accept=".docx,.pdf,.html,.md,.txt">
           <button class="btn btn-primary" onclick="parseTemplate()">上传模板并用 AI 解析</button>
-          <button class="btn btn-outline" onclick="loadTemplate()">载入已存模板</button>
-          <select id="presetSelect" style="padding:7px 8px;border:1px solid var(--border);border-radius:6px;font-size:13px;"></select>
-          <button class="btn btn-outline" onclick="loadPreset()">载入预置模板</button>
-          <button class="btn btn-primary" onclick="previewTemplate()">▶ 实时预览</button>
-          <button class="btn btn-outline" onclick="showCustomBlocks()">🧩 自定义块库</button>
-          <button class="btn btn-danger" onclick="resetTemplate()">恢复默认并清空</button>
-          <button class="btn btn-primary" onclick="saveTemplateBlocks()">保存模板</button>
-        </div>
-        <div style="display:flex;gap:12px;">
-          <!-- 模块库 -->
-          <div style="width:200px;flex-shrink:0;border:1px solid var(--border);border-radius:8px;padding:10px;background:#FAFBFC;">
-            <div style="font-size:12px;font-weight:600;color:var(--muted);margin-bottom:8px;">模块库（拖入画布）</div>
-            <div id="moduleLib"></div>
-          </div>
-          <!-- 画布 -->
-          <div style="flex:1;">
-            <div id="templateCanvas" style="min-height:300px;border:2px dashed var(--border);border-radius:8px;padding:10px;background:#fff;"></div>
-            <div id="templatePreview" style="display:none;margin-top:14px;border:1px solid var(--border);border-radius:8px;padding:12px;background:#FAFBFC;"></div>
-          </div>
+          <button class="btn btn-outline" onclick="loadTemplate()">载入当前模板</button>
+          <button class="btn btn-danger" onclick="resetTemplate()">恢复默认</button>
+          <button class="btn btn-primary" onclick="window.open('/lib/templates.html','_blank')">📋 模板库（版本历史）</button>
         </div>
         <div class="msg" id="templateMsg"></div>
+        <div id="templatePreview" style="border:1px solid var(--border);border-radius:8px;padding:14px;background:#fff;"></div>
       </div>
     </div>
 
@@ -341,50 +327,12 @@
     <!-- 设置面板 -->
     <div class="panel" id="panel-settings">
       <div class="card">
-        <h2>DeepSeek API Key（仅保存本地）</h2>
-        <p style="font-size:12px;color:var(--muted);margin-bottom:14px;">
-          用于「AI 增强周报」「模板 AI 解析」与「Word/PDF 文本提炼」。Key 只会写入本机的
-          <code style="background:#F0F2F5;padding:1px 5px;border-radius:4px;">config/keys.json</code>
-          （已被 .gitignore 排除，不会进入 git），接口只返回脱敏信息，不会泄漏到任何服务器。
+        <h2>🔧 AI 配置已移至独立库</h2>
+        <p style="font-size:13px;color:var(--muted);margin-bottom:10px;">
+          API Key、模型、接口地址、Token 用量等 AI 配置已迁移到独立的「AI 配置库」。
         </p>
-        <div class="field">
-          <label>API Key</label>
-          <div class="row">
-            <input type="password" id="apiKeyInput" placeholder="sk-..." style="width:340px" autocomplete="off" spellcheck="false">
-            <button class="btn btn-primary" onclick="saveApiKey()">保存到本地</button>
-            <button class="btn btn-outline" onclick="testApiKey()">测试连接</button>
-            <button class="btn btn-danger" onclick="clearApiKey()">清除本地 Key</button>
-          </div>
-          <div class="hint" id="keyStatus" style="margin-top:8px;"></div>
-        </div>
-        <div class="msg" id="keyMsg"></div>
-      </div>
-      <div class="card">
-        <h2>说明</h2>
-        <ul style="font-size:12.5px;color:var(--muted);margin-left:18px;line-height:1.9;">
-          <li>环境变量 <code>DEEPSEEK_API_KEY</code> 优先于本地文件；两者都没配置时，AI 功能自动回退为规则引擎文案。</li>
-          <li>「测试连接」会发送一条最小请求到 DeepSeek 官方接口验证 Key 是否可用（未保存的输入不会被写入磁盘）。</li>
-          <li>清除操作只删除本地文件中的 Key，不影响系统环境变量。</li>
-        </ul>
-      </div>
-      <div class="card">
-        <h2>AI 模型与接口（仅保存本地）</h2>
-        <p style="font-size:12px;color:var(--muted);margin-bottom:12px;">
-          选择生成周报/提炼文本使用的模型与 API 地址。配置只写入本机 config/keys.json，不会上传。
-        </p>
-        <div class="field">
-          <label>模型</label>
-          <select id="aiModelSelect" style="width:100%;padding:8px 10px;border:1px solid var(--border);border-radius:6px;"></select>
-          <div class="hint" style="margin-top:4px;">deepseek-chat 通用性价比高；deepseek-reasoner 推理增强、更贵更慢、综述更深刻</div>
-        </div>
-        <div class="field">
-          <label>API 地址（Base URL，兼容 OpenAI 格式；留空用官方地址）</label>
-          <input type="text" id="aiBaseUrl" placeholder="https://api.deepseek.com" style="width:100%">
-        </div>
         <div class="row">
-          <button class="btn btn-primary" onclick="saveAiConfig()">保存配置</button>
-          <button class="btn btn-outline" onclick="loadAiConfig()">重新载入</button>
-          <span id="aiCfgMsg" style="font-size:12px;color:var(--muted)"></span>
+          <button class="btn btn-primary" onclick="location.href='/lib/ai.html'">⚙️ 打开 AI 配置库</button>
         </div>
       </div>
       <div class="card">
@@ -401,19 +349,13 @@
         </div>
       </div>
       <div class="card">
-        <h2>AI Token 用量（省钱看这里）</h2>
-        <p style="font-size:12px;color:var(--muted);margin-bottom:12px;">
-          所有 AI 结果都有本地缓存：相同数据不会重复付费。以下统计来自本机记录（约 ¥0.001/千输入 token、¥0.002/千输出 token 估算）。
-        </p>
-        <div class="kpi-grid" id="tokenKpis" style="grid-template-columns:repeat(auto-fit,minmax(140px,1fr));"></div>
-        <div class="row" style="margin-bottom:10px;">
-          <button class="btn btn-outline" onclick="loadTokenUsage()">刷新</button>
-          <button class="btn btn-danger" onclick="clearTokenUsage()">清空统计</button>
-          <span id="tokenMsg" style="font-size:12px;color:var(--muted)"></span>
-        </div>
-        <div style="font-size:12px;font-weight:600;color:var(--muted);margin-bottom:6px;">最近记录</div>
-        <div id="tokenEntries" style="max-height:220px;overflow-y:auto;"></div>
+        <h2>说明</h2>
+        <ul style="font-size:12.5px;color:var(--muted);margin-left:18px;line-height:1.9;">
+          <li>环境变量 <code>DEEPSEEK_API_KEY</code> 优先于本地文件；两者都没配置时，AI 功能自动回退为规则引擎文案。</li>
+          <li>全部配置只写入本机 <code>config/</code>（已被 .gitignore 排除），不会上传。</li>
+        </ul>
       </div>
+    </div>
     </div>
   </div>
 </div>
@@ -436,10 +378,7 @@
     <div id="srcModalBody"></div>
   </div>
 </div>
-<div id="cbModal" style="display:none;position:fixed;left:0;top:0;right:0;bottom:0;background:rgba(0,0,0,.35);z-index:96;overflow:auto;">
-  <div style="background:var(--card);max-width:600px;margin:60px auto;border-radius:10px;padding:16px;max-height:85vh;overflow-y:auto;">
-    <div id="cbModalBody"></div>
-  </div>
+
 </div>
 <input type="file" id="uploadInput" multiple style="display:none" accept=".xlsx,.xlsm,.csv,.docx,.pdf">
 <script>
@@ -1266,305 +1205,41 @@ async function toggleHistory(){
 }
 
 // ============ 模板 ============
-// ============ 可视化模板编辑器（blocks） ============
-let tplBlocks = [];           // 当前画布 blocks
-let tplModules = [];          // 模块库
-let tplKpiOptions = [];       // KPI 可选字段
-let tplPresets = {};          // 预置模板
-let tplPhDocs = {};           // 占位符说明（引用路径/计算方式，右键可查）
-let tplAiScopes = [];         // AI 块数据源选项
-let tplSet = state;           // 共享 state
-
-const MODULE_DEFAULTS = {
-  'title':   {title:'{project_name} 项目周报'},
-  'meta':    {format:'周期：{period} ｜ 生成日期：{today}'},
-  'heading': {title:'章节标题'},
-  'overview':{placeholder:'overview'},
-  'kpi':     {keys:['total','done','completion_rate']},
-  'stats_table':{},
-  'status':  {},
-  'risk_list':{},
-  'plan':    {},
-  'delta':   {},
-  'transition': {},
-  'project_table': {projects:''},
-  'project_sections': {projects:''},
-  'ai_block': {data_scope:'stats_summary', prompt:'请从以下数据中总结 3 条管理层最该关注的事项，逐条列出：\n{data}', system:''},
-  'formula': {expression:'completion_rate', label:'完成率', as_percent:false},
-  'custom':  {content:'自定义内容', is_html:false},
-};
-
+// ============ 模板库（上传文档 + AI 解析；生成走 AI 主链路） ============
 async function loadTemplate(){
-  const d = await (await fetch('/api/template')).json();
-  tplModules = d.modules || [];
-  tplKpiOptions = d.kpi_options || [];
-  tplPresets = d.presets || {};
-  tplPhDocs = d.placeholder_docs || {};
-  tplAiScopes = d.ai_scopes || [];
-  // 填充预置模板下拉
-  $('presetSelect').innerHTML = Object.keys(tplPresets).map(k=>
-    `<option value="${k}">${tplPresets[k].label}${tplPresets[k].desc?' — '+tplPresets[k].desc:''}</option>`).join('');
-  if(d.format === 'blocks' && d.blocks && d.blocks.length){
-    tplBlocks = d.blocks.map((b,i)=>({...b, _id:'b'+Date.now()+'_'+i}));
-  } else {
-    tplBlocks = (d.default_blocks||[]).map((b,i)=>({...b, _id:'b'+Date.now()+'_'+i}));
-  }
-  renderModuleLib();
-  renderCanvas();
-}
-function loadPreset(){
-  const key = $('presetSelect').value;
-  const preset = (tplPresets||{})[key];
-  if(!preset) return;
-  tplBlocks = (preset.blocks||[]).map((b,i)=>({...b,_id:'b'+Date.now()+'_'+i}));
-  renderCanvas();
-  $('templateMsg').className='msg ok';
-  $('templateMsg').textContent=`已载入预置模板「${preset.label}」（可在画布继续编辑后保存）`;
-}
-async function previewTemplate(){
-  if(!tplBlocks || !tplBlocks.length){ alert('画布为空，先拖入或载入模板'); return; }
-  $('templateMsg').className=''; $('templateMsg').textContent='预览生成中...';
-  const clean = tplBlocks.map(({_id,...b})=>b);
-  const fd = new FormData();
-  const cur = state.current;
-  if(cur && cur.startsWith('sheet:')) fd.append('sheet_ids',cur.split(':')[1]);
-  else if(cur && cur.startsWith('group:')){
-    const g = state.groups[cur.split(':')[1]];
-    if(g && g.sheets) fd.append('sheet_ids',g.sheets.join(','));
-  }
-  fd.append('use_ai','false');
-  fd.append('template_blocks', JSON.stringify(clean));
+  const box = $('templatePreview'); if(!box) return;
+  const msg = $('templateMsg');
   try{
-    const res = await fetch('/api/generate',{method:'POST',body:fd});
-    const d = await res.json();
-    if(!res.ok) throw new Error(JSON.stringify(d));
-    $('templatePreview').innerHTML = d.generated[0].report;
-    $('templatePreview').style.display='block';
-    $('templateMsg').className='msg ok'; $('templateMsg').textContent='预览已生成（数据来自当前选中视图，未保存）';
-  }catch(e){ $('templateMsg').className='msg err'; $('templateMsg').textContent='预览失败:'+e.message; }
-}
-function useDefaultTemplate(){
-  fetch('/api/template').then(r=>r.json()).then(d=>{
-    tplBlocks = (d.default_blocks||[]).map((b,i)=>({...b,_id:'b'+Date.now()+'_'+i}));
-    renderCanvas();
-    $('templateMsg').className='msg ok'; $('templateMsg').textContent='已载入默认模板blocks';
-  });
-}
-function renderModuleLib(){
-  $('moduleLib').innerHTML = tplModules.map(m=>
-    `<div draggable="true" ondragstart="libDrag(event,'${m.type}')"
-       style="border:1px solid var(--border);border-radius:6px;padding:8px 10px;margin-bottom:6px;cursor:grab;background:#fff;font-size:12px;">
-       <div style="font-weight:600;">${m.icon} ${m.label}</div>
-       <div style="font-size:11px;color:var(--muted)">${m.desc}</div></div>`).join('');
-}
-function libDrag(ev, type){ ev.dataTransfer.setData('text/block-type', type); }
-
-function renderCanvas(){
-  const box=$('templateCanvas');
-  if(!tplBlocks.length){ box.innerHTML='<div style="text-align:center;color:var(--muted);padding:40px;font-size:13px;">从左侧模块库拖入模块，或点击"默认"载入</div>'; return; }
-  box.innerHTML = tplBlocks.map((b,i)=>blockHtml(b,i)).join('');
-  // 绑定 canvas 内拖动
-  box.querySelectorAll('.tpl-block').forEach(el=>{
-    el.addEventListener('dragover', e=>e.preventDefault());
-    el.addEventListener('drop', e=>{
-      e.preventDefault();
-      const type = e.dataTransfer.getData('text/block-type');
-      const from = parseInt(el.dataset.idx);
-      if(type){ // 从库拖入，插到当前块前
-        addBlockAt(type, from);
-      } else {
-        const fromId = e.dataTransfer.getData('text/block-from');
-        if(fromId!=null) moveBlock(parseInt(fromId), from);
-      }
-    });
-  });
-}
-function blockHtml(b,i){
-  const label = (tplModules.find(m=>m.type===b.type)||{}).label || b.type;
-  return `<div class="tpl-block" draggable="true" data-idx="${i}"
-    ondragstart="tplDrag(event,${i})"
-    ondragover="event.preventDefault()"
-    style="border:1px solid var(--border);border-radius:6px;margin-bottom:8px;padding:8px;background:#fff;">
-    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;cursor:grab;">
-      <span style="font-size:12px;font-weight:600;color:var(--primary)">⋮⋮ ${label}</span>
-      <span>
-        <button class="btn btn-outline btn-sm" style="font-size:11px;padding:3px 8px" onclick="moveBlock(${i},${i-1})">↑</button>
-        <button class="btn btn-outline btn-sm" style="font-size:11px;padding:3px 8px" onclick="moveBlock(${i},${i+1})">↓</button>
-        <button class="btn btn-danger btn-sm" style="font-size:11px;padding:3px 8px" onclick="removeBlock(${i})">✕</button>
-      </span>
-    </div>
-    ${blockEditorHtml(b,i)}
-  </div>`;
-}
-function tplDrag(ev, i){ ev.dataTransfer.setData('text/block-from', String(i)); }
-
-function blockEditorHtml(b,i){
-  const phBtn = `<button class="btn btn-outline btn-sm" style="font-size:11px;padding:2px 8px;margin-left:6px" onclick="showPhDocs(${i})" title="查看占位符引用路径/计算方式（也可在输入框右键）">💡占位符</button>`;
-  switch(b.type){
-    case 'title':
-    case 'heading':
-      return `<div class="field"><label>标题${phBtn}</label><input type="text" style="width:100%" value="${esc(b.title||'')}" onchange="updBlock(${i},'title',this.value)" oncontextmenu="event.preventDefault();showPhDocs(${i})"></div>`;
-    case 'meta':
-      return `<div class="field"><label>格式（含{period}{today}占位）${phBtn}</label><input type="text" style="width:100%" value="${esc(b.format||'周期：{period}')}" onchange="updBlock(${i},'format',this.value)" oncontextmenu="event.preventDefault();showPhDocs(${i})"></div>`;
-    case 'overview':
-      return `<div class="field"><label>显示内容</label><select onchange="updBlock(${i},'placeholder',this.value)">
-        <option value="overview" ${b.placeholder!=='next_plan'?'selected':''}>进展综述</option>
-        <option value="next_plan" ${b.placeholder==='next_plan'?'selected':''}>下周计划</option></select></div>`;
-    case 'kpi':
-      return `<div class="field"><label>KPI 字段（勾选显示，自动附绝对值）</label><div style="display:flex;flex-wrap:wrap;gap:6px;">
-        ${tplKpiOptions.map(o=>`<label style="font-size:12px;display:flex;gap:3px;align-items:center">
-          <input type="checkbox" ${(b.keys||[]).includes(o.key)?'checked':''} onchange="toggKpi(${i},'${o.key}',this.checked)">${o.label}</label>`).join('')}</div></div>`;
-    case 'project_table':
-    case 'project_sections':
-      return `<div class="field"><label>只看部分项目（留空=全部；逗号分隔项目名，如：财务项目,测试项目）</label>
-        <input type="text" style="width:100%" value="${esc(b.projects||'')}" placeholder="全部项目" onchange="updBlock(${i},'projects',this.value)">
-        <div class="hint">渲染时按「数据」页当前选中的项目/分组输出</div></div>`;
-    case 'ai_block':
-      return `<div class="field"><label>数据源（下拉选择，避免输入偏差）</label>
-        <select style="width:100%" onchange="updBlock(${i},'data_scope',this.value)">
-          ${(tplAiScopes||[]).map(o=>`<option value="${o.value}" ${(b.data_scope||'stats_summary')===o.value?'selected':''}>${o.label}</option>`).join('')}
-        </select></div>
-        <div class="field"><label>提示词（{data} 会被替换为该数据源的实际数据；可写"从xxx中总结/提炼…"句式）</label>
-        <textarea rows="4" style="width:100%;font-size:12px" onchange="updBlock(${i},'prompt',this.value)">${esc(b.prompt||'')}</textarea></div>
-        <div class="field"><label>System（可选，留空用默认"严谨分析助手"）</label>
-        <input type="text" style="width:100%" value="${esc(b.system||'')}" onchange="updBlock(${i},'system',this.value)"></div>`;
-    case 'formula':
-      return `<div class="field"><label>表达式（字段：total/done/in_progress/not_started/delayed/risk/completion_rate/avg_progress/avg_target_progress；支持 + - * / ( ) %）</label>
-        <input type="text" style="width:100%" value="${esc(b.expression||'completion_rate')}" onchange="updBlock(${i},'expression',this.value)" placeholder="如 risk/total*100">
-        <div class="hint">示例：completion_rate（完成率）、avg_progress - avg_target_progress（进度差距）、risk/total*100（风险占比）</div></div>
-        <div class="field"><label>显示名称</label><input type="text" style="width:100%" value="${esc(b.label||'指标')}" onchange="updBlock(${i},'label',this.value)"></div>
-        <label style="font-size:12px;display:flex;gap:3px;align-items:center;"><input type="checkbox" ${b.as_percent?'checked':''} onchange="updBlock(${i},'as_percent',this.checked)"> 结果按百分比显示</label>`;
-    case 'custom':
-      return `<div class="field"><label>内容${phBtn}</label><textarea rows="3" style="width:100%" onchange="updBlock(${i},'content',this.value)" oncontextmenu="event.preventDefault();showPhDocs(${i})">${esc(b.content||'')}</textarea>
-        <label style="font-size:12px;display:flex;gap:3px;align-items:center;margin-top:4px"><input type="checkbox" ${b.is_html?'checked':''} onchange="updBlock(${i},'is_html',this.checked)">作为 HTML</label></div>`;
-    default:
-      // 数据自动绑定型模块：人工勾选是否用当前统计填充（锚点开关）
-      return `<label style="font-size:12px;display:flex;gap:4px;align-items:center;"><input type="checkbox" ${b.binding!==false?'checked':''} onchange="updBlock(${i},'binding',this.checked)"> 数据绑定（勾选=按当前统计自动填充；取消=输出占位提示）</label>`;
-  }
-}
-function showPhDocs(i){
-  const b = tplBlocks[i]; if(!b) return;
-  const m = $('phModal');
-  const rows = Object.keys(tplPhDocs).map(ph=>{
-    const d = tplPhDocs[ph];
-    return `<div style="padding:6px 0;border-bottom:1px solid var(--border);font-size:12px;">
-      <code style="background:#F0F2F5;padding:1px 6px;border-radius:4px;">${ph}</code>
-      <div style="color:var(--muted);margin-top:2px">引用路径：${esc(d.path||'-')}</div>
-      <div style="color:var(--muted)">计算方式：${esc(d.formula||'-')}（${esc(d.type||'')}）</div></div>`;
-  }).join('');
-  m.innerHTML = `<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">
-      <b style="font-size:13px">占位符说明（在文本中写 ${'{完成率}'} 之类即自动填充；想固定数值，把占位符改成数字即可）</b>
-      <button class="btn btn-danger btn-sm" onclick="$('phModal').style.display='none'" style="font-size:11px;padding:2px 8px">关闭</button></div>` + rows;
-  m.style.display='block';
-}
-function updBlock(i,key,val){ tplBlocks[i][key]=val; }
-function toggKpi(i,key,ch){ tplBlocks[i].keys = tplBlocks[i].keys||[]; if(ch){ if(!tplBlocks[i].keys.includes(key)) tplBlocks[i].keys.push(key);} else tplBlocks[i].keys=tplBlocks[i].keys.filter(k=>k!==key); }
-function addBlockAt(type, idx){ const b={type, ...JSON.parse(JSON.stringify(MODULE_DEFAULTS[type]||{})), _id:'b'+Date.now()+Math.floor(Math.random()*1000)}; tplBlocks.splice(idx,0,b); renderCanvas(); }
-function removeBlock(i){ tplBlocks.splice(i,1); renderCanvas(); }
-function moveBlock(from,to){ if(to<0||to>=tplBlocks.length||from===to)return; const [b]=tplBlocks.splice(from,1); tplBlocks.splice(to,0,b); renderCanvas(); }
-
-async function saveTemplateBlocks(){
-  if(!tplBlocks.length){alert('画布为空');return;}
-  const clean = tplBlocks.map(({_id, ...b})=>b);
-  const res = await fetch('/api/template',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({format:'blocks', blocks:clean})});
-  $('templateMsg').className = res.ok?'msg ok':'msg err';
-  $('templateMsg').textContent = res.ok?'模板已保存（后续自动延用）':'保存失败';
-}
-// ============ 自定义块库（AI 提示词块 / 公式计算块，保存复用） ============
-async function showCustomBlocks(){
-  const d = await (await fetch('/api/custom_blocks')).json();
-  const blocks = d.blocks||{};
-  const scopeOpts = (tplAiScopes||[]).map(o=>`<option value="${o.value}">${o.label}</option>`).join('');
-  const list = Object.keys(blocks).length ? Object.keys(blocks).map(n=>{
-    const b = blocks[n];
-    const desc = b.type==='ai_block' ? `数据源=${b.data_scope||'stats_summary'}` : `公式=${b.expression||''}`;
-    return `<div style="display:flex;align-items:center;gap:8px;padding:6px 4px;border-bottom:1px solid var(--border);font-size:13px;">
-      <b>${esc(n)}</b> <span style="font-size:11px;color:var(--muted)">${b.type==='ai_block'?'🧩AI块':'ƒ公式'} · ${esc(desc)}</span>
-      <span style="margin-left:auto;display:flex;gap:6px;">
-        <button class="btn btn-primary btn-sm" style="font-size:11px;padding:2px 8px" onclick="cbInsert('${esc(n).replace(/'/g,"\\'")}',${JSON.stringify(b).replace(/'/g,"\\'")})">插入画布</button>
-        <button class="btn btn-danger btn-sm" style="font-size:11px;padding:2px 8px" onclick="cbDelete('${esc(n).replace(/'/g,"\\'")}')">删除</button>
-      </span></div>`;
-  }).join('') : '<div style="font-size:12px;color:var(--muted);padding:6px 0;">（库为空，先新建一个）</div>';
-  $('cbModalBody').innerHTML = `
-    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;">
-      <b style="font-size:14px;">🧩 自定义块库</b>
-      <button class="btn btn-danger btn-sm" onclick="$('cbModal').style.display='none'">关闭</button>
-    </div>
-    <div style="max-height:220px;overflow-y:auto;margin-bottom:12px;">${list}</div>
-    <h3 style="font-size:13px;margin:8px 0 6px;">新建并保存</h3>
-    <div class="field"><label>名称</label><input id="cbName" type="text" style="width:100%" placeholder="如：管理层关注事项"></div>
-    <div class="field"><label>类型</label><select id="cbType" style="width:100%" onchange="$('cbCfg').innerHTML=cbType==='ai_block'?cbAiForm():cbFormulaForm()">
-      <option value="ai_block">🧩 AI 提示词块（从{数据源}中{动作}）</option>
-      <option value="formula">ƒ 公式计算块</option>
-    </select></div>
-    <div id="cbCfg"></div>
-    <div class="row" style="margin-top:10px;">
-      <button class="btn btn-primary" onclick="cbSaveNew()">保存到库</button>
-      <span id="cbMsg" style="font-size:12px;color:var(--muted)"></span>
-    </div>`;
-  $('cbCfg').innerHTML = cbAiForm(scopeOpts);
-  $('cbModal').style.display='block';
-}
-function cbAiForm(scopeOpts){
-  return `<div class="field"><label>数据源（下拉）</label><select id="cbScope" style="width:100%">${scopeOpts||''}</select></div>
-    <div class="field"><label>提示词（{data} 会替换为数据）</label>
-    <textarea id="cbPrompt" rows="3" style="width:100%;font-size:12px">请从以下数据中总结 3 条管理层最该关注的事项，逐条列出：\n{data}</textarea></div>
-    <div class="field"><label>System（可选）</label><input id="cbSystem" type="text" style="width:100%" placeholder="留空用默认"></div>`;
-}
-function cbFormulaForm(){
-  return `<div class="field"><label>表达式</label><input id="cbExpr" type="text" style="width:100%" placeholder="risk/total*100" value="risk/total*100"></div>
-    <div class="field"><label>显示名称</label><input id="cbLabel" type="text" style="width:100%" placeholder="风险占比" value="风险占比"></div>
-    <label style="font-size:12px;display:flex;gap:3px;align-items:center;"><input id="cbPct" type="checkbox" checked> 按百分比显示</label>`;
-}
-async function cbSaveNew(){
-  const name = $('cbName').value.trim();
-  if(!name){ alert('请输入名称'); return; }
-  const type = $('cbType').value;
-  let def;
-  if(type==='ai_block'){
-    def = {type:'ai_block', data_scope:$('cbScope').value, prompt:$('cbPrompt').value, system:$('cbSystem').value.trim()};
-  }else{
-    def = {type:'formula', expression:$('cbExpr').value.trim(), label:$('cbLabel').value.trim()||'指标', as_percent:$('cbPct').checked};
-  }
-  $('cbMsg').textContent='保存中...';
-  const res = await fetch('/api/custom_blocks',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name, definition:def})});
-  const d = await res.json();
-  $('cbMsg').textContent = res.ok ? (d.note||'已保存') : (d.detail||'失败');
-  showCustomBlocks();
-}
-async function cbInsert(name, def){
-  tplBlocks.push({...JSON.parse(JSON.stringify(def)), _id:'cb'+Date.now()+Math.floor(Math.random()*1000)});
-  renderCanvas();
-  $('cbModal').style.display='none';
-  $('templateMsg').className='msg ok';
-  $('templateMsg').textContent=`已插入自定义块「${name}」到画布（可继续编辑后保存模板）`;
-}
-async function cbDelete(name){
-  if(!confirm('删除自定义块「'+name+'」？')) return;
-  await fetch('/api/custom_blocks/delete',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name})});
-  showCustomBlocks();
-}
-async function resetTemplate(){
-  if(!confirm('恢复默认模板？')) return;
-  await fetch('/api/template/reset',{method:'POST'});
-  useDefaultTemplate();
-  $('templateMsg').className='msg ok'; $('templateMsg').textContent='已恢复默认';
+    const d = await (await fetch('/api/template')).json();
+    const fmt = d.format||'html';
+    if(fmt === 'blocks'){
+      box.innerHTML = `<div style="font-size:13px;color:var(--muted);">当前模板为 Blocks 结构（${(d.blocks||[]).length} 个模块）。建议上传模板文档后用 AI 解析，或直接使用「🤖 AI 主链路」生成。</div>`;
+    } else {
+      box.innerHTML = (d.html||'').length ? d.html : '<div style="font-size:13px;color:var(--muted);">（当前为默认模板）</div>';
+    }
+    if(msg){ msg.className=''; msg.textContent='已载入当前模板'; }
+  }catch(e){ box.innerHTML='<div style="font-size:13px;color:var(--muted);">加载模板失败</div>'; }
 }
 async function parseTemplate(){
   const inp=$('templateFile'); if(!inp.files.length){alert('请先选择模板文件');return;}
+  $('templateMsg').className=''; $('templateMsg').textContent='⏳ AI 正在解析模板…';
   const fd=new FormData(); fd.append('file',inp.files[0]);
   const res=await fetch('/api/template/parse',{method:'POST',body:fd});
   const d=await res.json();
   if(d.ok){
-    // AI 解析返回 HTML -> 放入一个 custom 块
-    tplBlocks = [{type:'custom', content:d.html, is_html:true, _id:'b'+Date.now()}];
-    renderCanvas();
-    $('templateMsg').className='msg ok'; $('templateMsg').textContent='已用 AI 解析为 HTML 自定义块，可编辑保存';
+    $('templateMsg').className='msg ok';
+    $('templateMsg').textContent='✅ 已用 AI 解析为 HTML 模板并保存';
+    loadTemplate();
   } else {
     $('templateMsg').className='msg err';
-    $('templateMsg').textContent=(d.error||'解析失败')+'（已填入自定义块原文）';
-    if(d.source_text){ tplBlocks=[{type:'custom',content:d.source_text,is_html:false,_id:'b'+Date.now()}]; renderCanvas(); }
+    $('templateMsg').textContent=(d.error||'解析失败');
   }
+}
+async function resetTemplate(){
+  if(!confirm('恢复默认模板？')) return;
+  await fetch('/api/template/reset',{method:'POST'});
+  $('templateMsg').className='msg ok'; $('templateMsg').textContent='已恢复默认';
+  loadTemplate();
 }
 
 // ============ 周报 ============
@@ -1592,12 +1267,6 @@ async function generateReport(){
     }
   }
   $('genMsg').className=''; $('genMsg').textContent='生成中...';
-  // 先保存当前画布 blocks（若有），generate 依赖后端自动加载已存模板
-  if(tplBlocks && tplBlocks.length){
-    const clean = tplBlocks.map(({_id,...b})=>b);
-    await fetch('/api/template',{method:'POST',headers:{'Content-Type':'application/json'},
-      body:JSON.stringify({format:'blocks', blocks:clean})});
-  }
   let fd=new FormData();
   fd.append('project_name',$('genProject').value);
   fd.append('period',$('genPeriod').value);
@@ -1754,83 +1423,6 @@ async function loadTrend(){
     ctx.fillStyle='#2E7D32'; ctx.fillText('— 平均实际', padL+78, padT-4);
     ctx.fillStyle='#C0504D'; ctx.fillText('— 风险(×20%)', padL+168, padT-4);
   }catch(e){ $('trendMsg').textContent='趋势加载失败'; }
-}
-
-// ============ 设置（API Key 本地管理） ============
-async function loadKeyStatus(){
-  try{
-    const d = await (await fetch('/api/settings/key')).json();
-    const s = d.status || {};
-    $('keyStatus').innerHTML = s.has_key
-      ? `✅ 当前已配置：<code style="background:#F0F2F5;padding:1px 6px;border-radius:4px;">${esc(s.masked)}</code>（来源：${s.source==='env'?'环境变量（优先于本地文件）':'本地配置文件 config/keys.json'}）`
-      : '⚠️ 尚未配置 Key —— AI 增强将自动回退为规则引擎文案';
-  }catch(e){ $('keyStatus').textContent='获取 Key 状态失败：'+e.message; }
-}
-async function saveApiKey(){
-  const v = $('apiKeyInput').value.trim();
-  if(!v){ alert('请输入 API Key'); return; }
-  $('keyMsg').className=''; $('keyMsg').textContent='保存中...';
-  const res = await fetch('/api/settings/key',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({api_key:v})});
-  const d = await res.json();
-  if(!res.ok){ $('keyMsg').className='msg err'; $('keyMsg').textContent=d.detail||'保存失败'; return; }
-  $('apiKeyInput').value='';
-  $('keyMsg').className='msg ok'; $('keyMsg').textContent=d.note||'已保存';
-  loadKeyStatus();
-}
-async function clearApiKey(){
-  if(!confirm('确定清除本地保存的 API Key？')) return;
-  const d = await (await fetch('/api/settings/key/delete',{method:'POST'})).json();
-  $('keyMsg').className='msg ok'; $('keyMsg').textContent=d.note||'已清除';
-  loadKeyStatus();
-}
-async function testApiKey(){
-  const v = $('apiKeyInput').value.trim();
-  $('keyMsg').className=''; $('keyMsg').textContent='测试中（可能需要几秒）...';
-  const res = await fetch('/api/settings/key/test',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({api_key:v||null})});
-  const d = await res.json();
-  $('keyMsg').className = d.ok?'msg ok':'msg err';
-  $('keyMsg').textContent = d.ok?('✅ 连接成功：'+esc(d.reply)):('❌ 连接失败：'+esc(d.error||'未知错误'));
-}
-
-// ============ AI Token 用量 ============
-const SITE_LABELS = {report:'周报综述', enrich:'文本提炼', template:'模板解析', ai:'其它'};
-async function loadTokenUsage(){
-  const d = await (await fetch('/api/settings/tokens')).json();
-  const cost = (d.total_in/1e6*1 + d.total_out/1e6*2).toFixed(4);   // DeepSeek 约 ¥1/百万输入、¥2/百万输出
-  $('tokenKpis').innerHTML = [
-    ['调用次数', d.calls],
-    ['输入 tokens', d.total_in],
-    ['输出 tokens', d.total_out],
-    ['缓存命中', d.cache_hits],
-    ['估算费用', '¥'+cost],
-  ].map(k=>`<div class="kpi"><div class="v" style="font-size:17px">${k[1]}</div><div class="l">${k[0]}</div></div>`).join('');
-  $('tokenEntries').innerHTML = d.entries && d.entries.length ? d.entries.map(e=>
-    `<div style="display:flex;justify-content:space-between;font-size:12px;padding:5px 0;border-bottom:1px solid var(--border);">
-      <span>${e.ts} · ${SITE_LABELS[e.site]||e.site} ${e.cached?'· <span style="color:var(--success)">缓存命中</span>':''}</span>
-      <span style="color:var(--muted)">${e.cached?'0':e.tokens_in} → ${e.cached?'0':e.tokens_out} tok</span>
-    </div>`).join('') : '<div style="font-size:12px;color:var(--muted)">暂无记录（AI 未调用过，或尚未配置 Key）</div>';
-}
-async function clearTokenUsage(){
-  if(!confirm('确定清空 Token 用量统计？')) return;
-  await fetch('/api/settings/tokens/clear',{method:'POST'});
-  $('tokenMsg').textContent='已清空';
-  loadTokenUsage();
-}
-
-// ============ AI 模型与接口配置 ============
-async function loadAiConfig(){
-  const d = await (await fetch('/api/settings/ai')).json();
-  const cfg = d.config || {};
-  $('aiModelSelect').innerHTML = (d.models||[]).map(m=>
-    `<option value="${m.value}" ${cfg.model===m.value?'selected':''}>${m.label}</option>`).join('');
-  $('aiBaseUrl').value = (cfg.base_url && cfg.base_url!=='https://api.deepseek.com') ? cfg.base_url : '';
-}
-async function saveAiConfig(){
-  const body = {model: $('aiModelSelect').value, base_url: $('aiBaseUrl').value.trim()};
-  $('aiCfgMsg').textContent='保存中...';
-  const res = await fetch('/api/settings/ai',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
-  const d = await res.json();
-  $('aiCfgMsg').textContent = res.ok ? (d.note||'已保存') : (d.detail||'保存失败');
 }
 
 // ============ AI 提示词管理（可编辑调试 + 示例 few-shot） ============
@@ -2016,7 +1608,7 @@ document.querySelectorAll('.tab').forEach(t=>t.addEventListener('click',()=>{
   if(t.dataset.tab==='report') loadHistory();
   if(t.dataset.tab==='rules') loadRules();
   if(t.dataset.tab==='template') loadTemplate();
-  if(t.dataset.tab==='settings'){ loadKeyStatus(); loadTokenUsage(); loadAiConfig(); loadPrompts(); }
+  if(t.dataset.tab==='settings'){ loadPrompts(); }
 }));
 if(localStorage.getItem('pm_dark')==='1'){ document.body.classList.add('dark'); $('darkBtn').textContent='☀️'; }
 if(!localStorage.getItem('pm_onboard')){ $('onboard').style.display='block'; }
@@ -2024,7 +1616,7 @@ if(!localStorage.getItem('pm_onboard')){ $('onboard').style.display='block'; }
 document.addEventListener('click', e=>{
   if(!e.target.closest('#moveMenu') && !e.target.closest('.tree-item .ghost')) $('moveMenu').style.display='none';
 });
-loadRules(); loadTemplate(); loadKeyStatus(); loadTokenUsage(); loadAiConfig(); loadPrompts(); loadDashboard();
+loadRules(); loadTemplate(); loadPrompts(); loadDashboard();
 </script>
 </body>
 </html>
