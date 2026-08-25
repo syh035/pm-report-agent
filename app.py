@@ -614,6 +614,11 @@ def source_detail(sid: str):
             sheets.append({"sid": sid_key, "name": sh["name"],
                            "tasks": [t.to_dict() for t in sh["project"].tasks],
                            "parse_stats": sh.get("parse_stats") or {}})
+    # AI 提取为主：返回该源的分类仓条目（task/risk/issue/decision/milestone/metric/raw）
+    try:
+        ai_items = datastore.query_items(source_id=sid, limit=500)
+    except Exception:
+        ai_items = []
     # 数据集板块（若有）：源数据详情里可查看完整板块结构
     dataset_sections = None
     try:
@@ -621,7 +626,7 @@ def source_detail(sid: str):
     except Exception:
         dataset_sections = None
     return {"source": src, "raw_rows": raw_rows, "text": text, "sheets": sheets,
-            "dataset_sections": dataset_sections}
+            "ai_items": ai_items, "dataset_sections": dataset_sections}
 
 
 @app.get("/api/dataset/{sid}")

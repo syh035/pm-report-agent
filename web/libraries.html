@@ -53,7 +53,11 @@ async function loadCounts(){
     ]);
     counts.sources = (sources.items||[]).length;
     counts.reports = (history.items||history||[]).length || '—';
-    counts.rules = Object.keys(rules.rules||{}).length;
+    // 规则库计数 = 实际规则条目数（分析要求+生成要求+忽略词+状态词+列名），不含 7 个引擎参数
+    const r = rules.rules||{};
+    counts.rules = (r.requirements||[]).length + (r.generation_requirements||[]).length
+                 + (r.ignore_keywords||[]).length + Object.keys(r.status_words||{}).length
+                 + Object.keys(r.column_aliases||{}).length;
     counts.templates = 1;
   }catch(e){}
   const grid = document.getElementById('libGrid');

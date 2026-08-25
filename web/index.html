@@ -477,20 +477,26 @@ async function viewSource(sid){
       <b>📄 ${esc(src.filename||'')} <span style="font-size:11px;color:var(--muted)">（上传 ${esc(src.uploaded_at||'')}）</span></b>
       <span><button class="btn btn-primary" style="font-size:12px;padding:4px 10px" onclick="downloadSource('${sid}')">⬇ 下载原文</button>
       <button class="btn btn-danger btn-sm" onclick="$('srcModal').style.display='none'">关闭</button></span></div>`;
-  const sheets = d.sheets||[];
-  if(sheets.length){
-    html += sheets.map(sh=>{
-      const rows = (sh.tasks||[]).map(t=>
-        `<tr><td style="border:1px solid var(--border);padding:5px 8px;font-size:12px;color:var(--muted);">${esc(t.source_line||'-')}</td>
-         <td style="border:1px solid var(--border);padding:5px 8px;font-size:12px;">${esc(t.name)}${t.owner?'（'+esc(t.owner)+'）':''}</td>
-         <td style="border:1px solid var(--border);padding:5px 8px;font-size:12px;text-align:right;">${t.progress!=null?t.progress+'%':'-'}</td>
-         <td style="border:1px solid var(--border);padding:5px 8px;font-size:12px;">${esc(t.status_norm||t.status||'')}</td></tr>`).join('');
-      const ps = sh.parse_stats||{};
-      return `<h3 style="font-size:13px;margin:10px 0 6px;">🧾 ${esc(sh.name)} —— 原文 ↔ 解析对照（解析 ${ps.rule_hits||0} 条｜忽略 ${ps.ignored||0} 条｜模糊 ${ps.ambiguous||0} 条）</h3>
-        <table style="width:100%;border-collapse:collapse;"><tr><th style="border:1px solid var(--border);padding:5px 8px;font-size:11px;text-align:left;">原文行（source_line）</th><th style="border:1px solid var(--border);padding:5px 8px;font-size:11px;text-align:left;">解析任务</th><th style="border:1px solid var(--border);padding:5px 8px;font-size:11px;">进度</th><th style="border:1px solid var(--border);padding:5px 8px;font-size:11px;">状态</th></tr>${rows||'<tr><td colspan="4" style="padding:10px;color:var(--muted);font-size:12px;">无任务（全部被忽略或未识别）</td></tr>'}</table>`;
+  // AI 提取为主：展示该源的分类仓条目（task/risk/issue/decision/milestone/metric/raw）
+  const aiItems = d.ai_items||[];
+  const kindLabel = {task:'任务', risk:'风险', issue:'依赖/问题', decision:'决策', milestone:'里程碑', metric:'指标', raw:'原始'};
+  if(aiItems.length){
+    const byKind = {};
+    aiItems.forEach(it=>{ (byKind[it.kind]=byKind[it.kind]||[]).push(it); });
+    html += `<h3 style="font-size:13px;margin:10px 0 6px;">🧠 AI 提取条目（${aiItems.length} 条）</h3>`;
+    html += Object.entries(byKind).map(([kind, list])=>{
+      const rows = list.map(t=>{
+        const p = t.payload||{};
+        const detail = Object.entries(p).filter(([k])=>!['source_line'].includes(k)).slice(0,4)
+          .map(([k,v])=>`${esc(k)}: ${esc(String(v).slice(0,40))}`).join(' · ');
+        return `<tr><td style="border:1px solid var(--border);padding:5px 8px;font-size:12px;">${esc(t.name)}</td>
+          <td style="border:1px solid var(--border);padding:5px 8px;font-size:11px;color:var(--muted);">${detail||'—'}</td></tr>`;
+      }).join('');
+      return `<div style="margin:6px 0;"><b style="font-size:12px;">${kindLabel[kind]||kind}（${list.length}）</b>
+        <table style="width:100%;border-collapse:collapse;margin-top:4px;"><tr><th style="border:1px solid var(--border);padding:4px 7px;font-size:10px;text-align:left;background:var(--bg);">条目</th><th style="border:1px solid var(--border);padding:4px 7px;font-size:10px;text-align:left;background:var(--bg);">详情</th></tr>${rows||'<tr><td style="padding:6px;color:var(--muted);font-size:11px;">（无）</td></tr>'}</table></div>`;
     }).join('');
   } else {
-    html += '<div style="font-size:12px;color:var(--muted);margin:8px 0;">当前工作区无关联 sheet（文件已归档，可下载查看原文）</div>';
+    html += '<div style="font-size:12px;color:var(--muted);margin:8px 0;">暂无 AI 提取条目（上传时规则解析为主，可运行 AI 分析补全结构化）</div>';
   }
   const raw = d.raw_rows && d.raw_rows.length ? d.raw_rows.slice(0,30).map(r=>esc(r.join(' | '))).join('\n')
               : esc((d.text||'').slice(0,1500));
