@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>⚙️ 规则库 · PM Report Agent</title>
+<title>规则库 · PM Report Agent</title>
 <style>
   :root { --primary:#4A6CF7; --bg:#F7F8FA; --card:#fff; --border:#E4E7EC; --text:#2D3142; --muted:#6B6B80; --danger:#C0504D; }
   * { margin:0; padding:0; box-sizing:border-box; }
@@ -13,123 +13,244 @@
   .back { text-decoration:none; color:var(--primary); font-size:13px; float:right; }
   .card { background:var(--card); border:1px solid var(--border); border-radius:12px; padding:18px; margin-bottom:16px; }
   .card h3 { font-size:14px; margin-bottom:10px; }
-  .req { background:#F0FDF4; border:1px solid #BBF7D0; border-radius:10px; padding:10px 14px; margin-bottom:8px; font-size:13px; }
-  .req b { color:#166534; }
-  .req .meta { font-size:11px; color:var(--muted); margin-top:2px; }
-  .kv { display:flex; justify-content:space-between; padding:7px 4px; border-bottom:1px solid var(--border); font-size:13px; }
-  .kv:last-child { border-bottom:none; }
-  .kv .v { color:var(--primary); font-weight:600; }
   .converse { display:flex; gap:8px; margin-bottom:10px; flex-wrap:wrap; }
-  input[type=text] { flex:1; min-width:240px; border:1px solid var(--border); border-radius:8px; padding:7px 12px; font-size:13px; }
+  input[type=text], textarea { flex:1; min-width:240px; border:1px solid var(--border); border-radius:8px; padding:7px 12px; font-size:13px; }
   .btn { border:none; border-radius:8px; padding:7px 16px; font-size:13px; cursor:pointer; }
   .btn-primary { background:var(--primary); color:#fff; }
   .btn-outline { background:#fff; border:1px solid var(--border); color:var(--text); }
   .btn-danger { background:var(--danger); color:#fff; }
+  .btn-sm { font-size:11px; padding:3px 9px; border-radius:6px; }
   .draft { background:#EEF2FF; border:1px solid #C7D2FE; border-radius:10px; padding:12px 14px; margin-top:10px; font-size:13px; }
+  .req { background:#F0FDF4; border:1px solid #BBF7D0; border-radius:10px; padding:10px 14px; margin-bottom:8px; font-size:13px; }
+  .req b { color:#166534; }
+  .req .meta { font-size:11px; color:var(--muted); margin-top:2px; }
+  .kv { display:flex; justify-content:space-between; align-items:center; padding:7px 4px; border-bottom:1px solid var(--border); font-size:13px; }
+  .kv:last-child { border-bottom:none; }
+  .kv .v { color:var(--primary); font-weight:600; }
   .tag { display:inline-block; font-size:10px; background:#EEF2FF; color:var(--primary); border-radius:8px; padding:1px 7px; margin-left:6px; }
+  .import-box { border:1px dashed var(--border); border-radius:10px; padding:12px; margin-top:10px; }
+  .import-drafts { margin-top:8px; }
+  .draft-item { display:flex; align-items:center; gap:8px; padding:6px 4px; border-bottom:1px dashed var(--border); font-size:13px; }
+  .ck { width:14px; height:14px; accent-color:var(--primary); }
 </style>
 </head>
 <body>
 <div class="sub" style="display:flex;justify-content:space-between;align-items:center;">
-  <div><h1>⚙️ 规则库</h1><div>规则阈值 / 忽略词 / 列名 / 状态词映射 + AI 工作要求 · 支持对话式添加</div></div>
+  <div><h1>规则库</h1><div>分析要求（数据筛选/抽取）＋ 生成要求（文稿格式/口径）· 对话式添加 · 文档一键导入 · 可删除/批量删除</div></div>
   <a class="back" href="/libraries.html">← 返回数据库中心</a>
 </div>
 
 <div class="card">
-  <h3>💬 对话式添加规则（AI 理解 → 人工确认 → 写入）</h3>
+  <h3>对话式添加规则（AI 理解 → 人工确认 → 写入）</h3>
   <div class="converse">
-    <input type="text" id="ruleIn" placeholder="用自然语言描述规则，如：超期超过10天的任务标记高风险 / 周报风险部分按等级从高到低排序" onkeydown="if(event.key==='Enter')converse()">
-    <button class="btn btn-primary" onclick="converse()">🤖 AI 理解</button>
+    <input type="text" id="ruleIn" placeholder="例：风险超过7天标记高风险 / 周报风险部分按等级降序排列 / 进度落后30%以上标关注" onkeydown="if(event.key==='Enter')converse()">
+    <button class="btn btn-primary" onclick="converse()">AI 理解</button>
   </div>
   <div id="draftBox"></div>
   <div id="converseMsg" style="font-size:12px;color:var(--muted);"></div>
 </div>
 
 <div class="card">
-  <h3>📋 AI 工作要求（requirements，注入 AI 生成环节）</h3>
+  <h3>规则总览
+    <input type="text" id="ruleSearch" placeholder="搜索规则…（标题/内容/类型）" style="max-width:280px;font-size:12px;margin-left:10px;" oninput="renderAll()">
+  </h3>
+  <div id="overviewList" style="font-size:12px;color:var(--muted);"></div>
+</div>
+
+<div class="card">
+  <h3>规则文档一键导入（txt/md/Word/PDF → AI 批量理解 → 勾选确认）</h3>
+  <div class="converse">
+    <input type="file" id="ruleDocFile" accept=".txt,.md,.docx,.pdf,.html,.htm" style="font-size:12px;">
+    <button class="btn btn-outline" onclick="extractRuleDoc()">载入文档</button>
+    <button class="btn btn-primary" onclick="importRuleDoc()">AI 批量理解</button>
+  </div>
+  <div id="ruleDocHint" style="font-size:12px;color:var(--muted);"></div>
+  <div id="importDrafts" class="import-drafts"></div>
+</div>
+
+<div class="card">
+  <h3>分析要求（requirements — 数据筛选/抽取时的要求）
+    <button class="btn btn-danger btn-sm" style="float:right" onclick="batchDel('requirement')">批量删除选中</button>
+  </h3>
   <div id="reqList"></div>
 </div>
 
 <div class="card">
-  <h3>🔢 规则参数</h3>
+  <h3>生成要求（generation_requirements — 文稿生成时的要求）
+    <button class="btn btn-danger btn-sm" style="float:right" onclick="batchDel('generation_requirement')">批量删除选中</button>
+  </h3>
+  <div id="genReqList"></div>
+</div>
+
+<div class="card">
+  <h3>规则参数（点击数值可修改）</h3>
   <div id="rulesList"></div>
 </div>
 
 <script>
 const $ = id => document.getElementById(id);
-let rules = {}, meta = {}, pendingDraft = null;
+let rules = {}, meta = {}, pendingDraft = null, importDrafts = [];
+let reqSel = {}, genSel = {};   // 批量删除勾选
+
 async function load(){
   const d = await (await fetch('/api/rules')).json();
   rules = d.rules||{}; meta = d.meta||{};
-  // 工作要求（可删除）
+  // 分析要求
   const reqs = rules.requirements||[];
   $('reqList').innerHTML = reqs.length ? reqs.map((r,ri)=>`
-    <div class="req"><b>${esc(r.title)}</b> <span class="tag">${esc(r.scope||'全部')}</span><span class="tag">${esc(r.applies_to||'全部')}</span>
-      <div>${esc(r.description)}</div>
-      <div style="margin-top:4px;"><button class="btn btn-outline" style="font-size:11px;padding:2px 8px;" onclick="delRequirement(${ri})">🗑 删除该要求</button></div></div>`).join('')
-    : '<div style="color:var(--muted);font-size:13px;">暂无工作要求 —— 用上方对话框添加</div>';
-  // 规则参数（可点击数值编辑）
-  const kvs = Object.entries(rules).filter(([k])=>!['requirements','ignore_keywords','column_aliases','status_words'].includes(k));
+    <div class="req"><label style="display:flex;align-items:flex-start;gap:8px;cursor:pointer;">
+      <input type="checkbox" class="ck" data-req="${ri}" onchange="toggleSel('req',${ri},this.checked)">
+      <span style="flex:1;"><b>${esc(r.title)}</b> <span class="tag">${esc(r.scope||'全部')}</span><span class="tag">${esc(r.applies_to||'全部')}</span>
+      <div>${esc(r.description)}</div></span></label>
+      <button class="btn btn-danger btn-sm" onclick="delRule('requirement',${ri})">删除</button></div>`).join('')
+    : '<div style="color:var(--muted);font-size:13px;">暂无分析要求</div>';
+  // 生成要求
+  const gens = rules.generation_requirements||[];
+  $('genReqList').innerHTML = gens.length ? gens.map((r,ri)=>`
+    <div class="req"><label style="display:flex;align-items:flex-start;gap:8px;cursor:pointer;">
+      <input type="checkbox" class="ck" data-gen="${ri}" onchange="toggleSel('gen',${ri},this.checked)">
+      <span style="flex:1;"><b>${esc(r.title)}</b> <span class="tag">${esc(r.scope||'全部')}</span><span class="tag">${esc(r.applies_to||'全部')}</span>
+      <div>${esc(r.description)}</div></span></label>
+      <button class="btn btn-danger btn-sm" onclick="delRule('generation_requirement',${ri})">删除</button></div>`).join('')
+    : '<div style="color:var(--muted);font-size:13px;">暂无生成要求</div>';
+  // 规则参数
+  renderAll();
+  const kvs = Object.entries(rules).filter(([k])=>!['requirements','generation_requirements','ignore_keywords','column_aliases','status_words'].includes(k));
   $('rulesList').innerHTML = kvs.map(([k,v])=>{
     const m = meta[k]||{};
     return `<div class="kv"><span>${esc(m.label||k)} <span style="font-size:11px;color:var(--muted)">${esc(m.desc||'')}</span></span>
-      <span class="v" style="cursor:pointer;" onclick="editRule('${k}')" title="点击修改">${esc(v)} ✏️</span></div>`;
-  }).join('') + (rules.ignore_keywords?.length?`<div class="kv"><span>忽略词</span><span class="v">${esc(rules.ignore_keywords.join('、'))}</span></div>`:'')
-    + (Object.keys(rules.column_aliases||{}).length?`<div class="kv"><span>列名映射</span><span class="v">${esc(JSON.stringify(rules.column_aliases))}</span></div>`:'')
-    + (Object.keys(rules.status_words||{}).length?`<div class="kv"><span>状态词映射</span><span class="v">${esc(JSON.stringify(rules.status_words))}</span></div>`:'');
+      <span class="v" style="cursor:pointer;" onclick="editRule('${k}')" title="点击修改">${esc(v)} 修改</span></div>`;
+  }).join('')
+    + (rules.ignore_keywords?.length?`<div class="kv"><span>忽略词</span><span class="v">${rules.ignore_keywords.map((w,i)=>`${esc(w)} <button class="btn btn-danger btn-sm" onclick="delRule('ignore',null,'${esc(w)}')">删</button>`).join(' ')}</span></div>`:'')
+    + (Object.keys(rules.status_words||{}).length?`<div class="kv"><span>状态词映射</span><span class="v">${Object.entries(rules.status_words).map(([k,v])=>`${esc(k)}=${esc(v)} <button class="btn btn-danger btn-sm" onclick="delRule('status_word',null,'${esc(k)}')">删</button>`).join(' ')}</span></div>`:'')
+    + (Object.keys(rules.column_aliases||{}).length?`<div class="kv"><span>列名映射</span><span class="v">${Object.entries(rules.column_aliases).map(([k,v])=>`${esc(k)}=${esc(v)} <button class="btn btn-danger btn-sm" onclick="delRule('column_alias',null,'${esc(k)}')">删</button>`).join(' ')}</span></div>`:'');
+}
+function renderAll(){
+  const box = document.getElementById('overviewList'); if(!box) return;
+  const kw = (document.getElementById('ruleSearch')?.value||'').trim().toLowerCase();
+  const rows = [];
+  (rules.requirements||[]).forEach(r=>rows.push({t:'分析要求', title:r.title, desc:r.description}));
+  (rules.generation_requirements||[]).forEach(r=>rows.push({t:'生成要求', title:r.title, desc:r.description}));
+  Object.keys(rules.status_words||{}).forEach(k=>rows.push({t:'状态词', title:k+'='+rules.status_words[k], desc:''}));
+  Object.keys(rules.column_aliases||{}).forEach(k=>rows.push({t:'列名', title:k+'='+rules.column_aliases[k], desc:''}));
+  (rules.ignore_keywords||[]).forEach(k=>rows.push({t:'忽略词', title:k, desc:''}));
+  if(kw) rows = rows.filter(r=>(r.title+' '+r.desc+' '+r.t).toLowerCase().includes(kw));
+  const byType = {};
+  rows.forEach(r=>{ (byType[r.t]=byType[r.t]||[]).push(r); });
+  box.innerHTML = Object.entries(byType).map(([t,arr])=>`<div style="margin-bottom:6px;"><b>${esc(t)}（${arr.length}）</b>：${arr.map(r=>esc(r.title)).join('、')}</div>`).join('')
+    || '<div>没有匹配的规则</div>';
+}
+function toggleSel(type, idx, ch){
+  const m = type==='req' ? reqSel : genSel;
+  if(ch) m[idx]=1; else delete m[idx];
+}
+async function delRule(kind, index, key){
+  if(!confirm('删除该规则？')) return;
+  const res = await fetch('/api/rules/delete',{method:'POST',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({kind, index:index??null, key:key||''})});
+  const d = await res.json();
+  if(!res.ok){ alert(d.detail||'失败'); return; }
+  alert(d.note||'已删除'); load();
+}
+async function batchDel(kind){
+  const m = kind==='requirement' ? reqSel : genSel;
+  const indices = Object.keys(m).map(Number).sort((a,b)=>a-b);
+  if(!indices.length){ alert('请先勾选要删除的条目'); return; }
+  if(!confirm(`批量删除 ${indices.length} 条？`)) return;
+  const res = await fetch('/api/rules/batch-delete',{method:'POST',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({kind, indices})});
+  const d = await res.json();
+  if(!res.ok){ alert(d.detail||'失败'); return; }
+  alert(d.note||'已删除'); reqSel={}; genSel={}; load();
 }
 function editRule(key){
   const cur = rules[key];
-  const label = meta[key]?.label || key;
-  const v = prompt(`修改「${label}」的值（当前：${cur}）：`, cur);
-  if(v === null) return;
+  const v = prompt(`修改「${meta[key]?.label||key}」（当前：${cur}）：`, cur);
+  if(v===null) return;
   const num = Number(v);
   if(isNaN(num)){ alert('请输入有效数值'); return; }
   saveRulesPatch({[key]: num});
-}
-async function delRequirement(idx){
-  if(!confirm('删除这条工作要求？')) return;
-  const reqs = [...(rules.requirements||[])];
-  reqs.splice(idx,1);
-  saveRulesPatch({requirements: reqs});
 }
 async function saveRulesPatch(patch){
   const res = await fetch('/api/rules',{method:'POST',headers:{'Content-Type':'application/json'},
     body:JSON.stringify({...rules, ...patch})});
   const d = await res.json();
   if(!res.ok){ alert('保存失败: '+(d.detail||JSON.stringify(d))); return; }
-  alert('✅ 已保存并写入历史');
-  load();
+  alert('已保存并写入历史'); load();
 }
 async function converse(){
   const instr = $('ruleIn').value.trim();
   if(!instr){ alert('请输入规则需求'); return; }
-  $('converseMsg').textContent = '⏳ AI 正在理解…';
+  $('converseMsg').textContent = 'AI 正在理解…';
   $('draftBox').innerHTML = '';
-  try{
-    const res = await fetch('/api/rules/converse',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({instruction:instr})});
-    const d = await res.json();
-    if(!res.ok){ $('converseMsg').textContent = '失败: '+(d.detail||JSON.stringify(d)); return; }
-    if(!d.understood){ $('converseMsg').textContent = d.note||'未能理解'; return; }
-    pendingDraft = d.draft;
-    $('draftBox').innerHTML = `<div class="draft"><b>🤖 AI 理解结果</b>（请人工确认）<br>
-      类型：<b>${esc(d.draft.type)}</b> ｜ 标题：${esc(d.draft.title)}<br>
-      内容：${esc(JSON.stringify({value:d.draft.value,key:d.draft.key,scope:d.draft.scope,applies_to:d.draft.applies_to},null,1))}<br>
-      <div style="margin-top:8px;display:flex;gap:8px;">
-        <button class="btn btn-primary" onclick="confirmDraft()">✅ 确认写入</button>
-        <button class="btn btn-outline" onclick="$('draftBox').innerHTML='';pendingDraft=null">取消</button>
-      </div></div>`;
-    $('converseMsg').textContent = d.note||'';
-  }catch(e){ $('converseMsg').textContent = '异常: '+e; }
+  const res = await fetch('/api/rules/converse',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({instruction:instr})});
+  const d = await res.json();
+  if(!res.ok){ $('converseMsg').textContent = '失败: '+(d.detail||JSON.stringify(d)); return; }
+  if(!d.understood){ $('converseMsg').textContent = d.note||'未能理解'; return; }
+  pendingDraft = d.draft;
+  const typeLabel = d.draft.type==='generation_requirement'?'生成要求':d.draft.type==='requirement'?'分析要求':d.draft.type;
+  $('draftBox').innerHTML = `<div class="draft"><b>AI 理解结果（请确认）</b><br>
+    类型：<b>${esc(typeLabel)}</b> ｜ 标题：${esc(d.draft.title)}<br>
+    内容：${esc(d.draft.description)}<br>
+    <div style="margin-top:8px;display:flex;gap:8px;">
+      <button class="btn btn-primary" onclick="confirmDraft()">确认写入</button>
+      <button class="btn btn-outline" onclick="$('draftBox').innerHTML='';pendingDraft=null">取消</button>
+    </div></div>`;
+  $('converseMsg').textContent = d.note||'';
 }
 async function confirmDraft(){
   if(!pendingDraft) return;
   const res = await fetch('/api/rules/converse/confirm',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({draft:pendingDraft})});
   const d = await res.json();
   if(!res.ok){ alert('写入失败: '+(d.detail||JSON.stringify(d))); return; }
-  alert('✅ '+(d.applied?.detail||'已写入规则库'));
-  pendingDraft=null; $('draftBox').innerHTML=''; $('converseMsg').textContent='';
-  $('ruleIn').value='';
+  alert('已写入: '+(d.applied?.detail||''));
+  pendingDraft=null; $('draftBox').innerHTML=''; $('converseMsg').textContent=''; $('ruleIn').value='';
+  load();
+}
+async function extractRuleDoc(){
+  const f = $('ruleDocFile').files[0];
+  if(!f){ alert('请先选择规则文档'); return; }
+  const fd = new FormData(); fd.append('file', f);
+  const res = await fetch('/api/rules/template-extract',{method:'POST',body:fd});
+  const d = await res.json();
+  if(!res.ok){ alert('提取失败: '+JSON.stringify(d)); return; }
+  window._ruleDocText = d.text||'';
+  $('ruleDocHint').textContent = '已载入「'+(d.filename||'')+'」（'+d.text.length+' 字），可点「AI 批量理解」';
+}
+async function importRuleDoc(){
+  if(!window._ruleDocText){ alert('请先载入规则文档'); return; }
+  $('ruleDocHint').textContent = 'AI 批量理解中…';
+  const res = await fetch('/api/rules/import-text',{method:'POST',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({text: window._ruleDocText})});
+  const d = await res.json();
+  if(!res.ok){ $('ruleDocHint').textContent = '失败: '+(d.detail||JSON.stringify(d)); return; }
+  importDrafts = d.drafts||[];
+  $('ruleDocHint').textContent = d.note||'';
+  renderImportDrafts();
+}
+function renderImportDrafts(){
+  const box = $('importDrafts');
+  box.innerHTML = importDrafts.length ? importDrafts.map((dr,i)=>{
+    const typeLabel = dr.type==='generation_requirement'?'生成要求':dr.type==='requirement'?'分析要求':(dr.type==='rule'?'数值阈值':dr.type);
+    return `<div class="draft-item">
+      <input type="checkbox" class="ck" id="imp_${i}" checked>
+      <span><b>${esc(dr.title)}</b> <span class="tag">${esc(typeLabel)}</span></span>
+      <span style="color:var(--muted);font-size:12px;">${esc(dr.description)}</span>
+    </div>`;
+  }).join('') + `<div style="margin-top:10px;"><button class="btn btn-primary" onclick="confirmImports()">确认写入勾选项</button></div>` : '';
+}
+async function confirmImports(){
+  const sel = importDrafts.map((dr,i)=>$('imp_'+i)?.checked ? dr : null).filter(Boolean);
+  if(!sel.length){ alert('请勾选要写入的规则'); return; }
+  let n = 0;
+  for(const dr of sel){
+    const res = await fetch('/api/rules/converse/confirm',{method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({draft: dr})});
+    const d = await res.json();
+    if(res.ok && d.ok) n++;
+  }
+  alert(`已写入 ${n}/${sel.length} 条`);
+  importDrafts = []; $('importDrafts').innerHTML=''; $('ruleDocHint').textContent='';
   load();
 }
 function esc(s){ return String(s??'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }

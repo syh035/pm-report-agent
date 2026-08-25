@@ -47,6 +47,10 @@ def _conn() -> sqlite3.Connection:
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         op TEXT, source_id TEXT, filename TEXT, payload TEXT,
         created_at TEXT)""")
+    c.execute("""CREATE TABLE IF NOT EXISTS templates(
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        name TEXT, ttype TEXT, category TEXT, html TEXT,
+        created_at TEXT)""")
     c.commit()
     return c
 
@@ -340,3 +344,57 @@ def load_workspace() -> Optional[Dict]:
         for gid, g in (data.get("groups") or {}).items()
     }
     return {"sheets": sheets, "groups": groups}
+
+
+# ---------------- 模板库（命名入库 / 分类 / 按日期） ----------------
+def save_template_lib(name: str, html: str, ttype: str = "week",
+                      category: str = "") -> int:
+    """命名入库一个模板（按类型 week/day + 自定义分类 + 日期）。返回 id。"""
+    with _conn() as c:
+        cur = c.execute(
+            "INSERT INTO templates(name,ttype,category,html,created_at) VALUES(?,?,?,?,?)",
+            (name or "未命名模板", ttype or "week", category or "",
+             html or "", datetime.now().strftime("%Y-%m-%d %H:%M:%S")),
+        )
+        return int(cur.lastrowid)
+
+
+def list_template_lib(ttype: str = "", category: str = "", limit: int = 200) -> List[Dict]:
+    """模板库列表（可按类型/分类过滤，新→旧）。"""
+    sql = "SELECT * FROM templates WHERE 1=1"
+    args: List = []
+    if ttype:
+        sql += " AND ttype=?"
+        args.append(ttype)
+    if category:
+        sql += " AND category=?"
+        args.append(category)
+    sql += " ORDER BY id DESC LIMIT ?"
+    args.append(limit)
+    with _conn() as c:
+        rows = c.execute(sql, args).fetchall()
+    return [dict(r) for r in rows]
+
+
+def get_template_lib(tid: int) -> Optional[Dict]:
+    with _conn() as c:
+        r = c.execute("SELECT * FROM templates WHERE id=?", (tid,)).fetchone()
+    return dict(r) if r else None
+
+
+def delete_template_lib(tid: int) -> None:
+    with _conn() as c:
+        c.execute("DELETE FROM templates WHERE id=?", (tid,))
+
+
+def latest_template_lib(ttype: str = "") -> Optional[Dict]:
+    """该类型最新模板（生成时默认用）。"""
+    rows = list_template_lib(ttype=ttype, limit=1)
+    return rows[0] if rows else None
+
+
+def template_categories() -> List[str]:
+    """模板库已有分类（供下拉选择）。"""
+    with _conn() as c:
+        rows = c.execute("SELECT DISTINCT category FROM templates WHERE category<>''").fetchall()
+    return [r["category"] for r in rows]

@@ -33,8 +33,10 @@ DEFAULT_RULES: Dict[str, Any] = {
     "ignore_keywords": [],       # 忽略词：命中该词的文本行/任务名不作为任务（如"下周重点"）
     "column_aliases": {},        # 自定义列名映射：{"表头名": "字段"}，字段 ∈ name/owner/progress/status/plan_start/plan_end/actual_end/note
     "status_words": {},          # 自定义状态词映射：{"变体词": "标准状态"}，如 {"搁置": "已滞后"}
-    # —— 对话式管理：AI 的工作要求（注入 AI 生成环节的指令，非规则引擎硬编码）——
+    # —— 对话式管理：AI 的工作要求（分析 AI 的要求，注入上传时的 AI 辅助分析）——
     "requirements": [],          # [{"title","description","scope","applies_to"}]
+    # —— 生成要求（生成文稿 AI 的要求，注入所有生成方式）——
+    "generation_requirements": [],  # [{"title","description","scope","applies_to"}]
 }
 
 # 数值型字段（int）—— 颜色字段用字符串
@@ -116,7 +118,7 @@ def _normalize(rules: Dict[str, Any]) -> Dict[str, Any]:
                 out[k] = cleaned
             else:
                 out[k] = {}
-        elif k == "requirements":
+        elif k in ("requirements", "generation_requirements"):
             # AI 工作要求：dict 列表，逐条保留 title/description/scope/applies_to
             if isinstance(v, list):
                 cleaned = []

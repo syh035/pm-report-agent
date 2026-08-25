@@ -30,9 +30,11 @@ PROMPT_DEFAULTS: Dict[str, Dict] = {
             "第二段标题：下周计划 —— 2-4 句，给出下周工作重点建议。\n"
             "严格约束：文中出现的所有百分比和任务数字，只能来自上面给定的数据，禁止编造任何数字；"
             "提到任务名只能用数据中的任务名。\n"
+            "必须遵守【生成要求】（用户对文稿的固定要求）：\n{generation_requirements}\n"
             "用以下格式分隔两段：\n[综述]...内容...\n[计划]...内容..."
         ),
-        "docs": {"{stats_json}": "项目统计 JSON（完成率/风险/任务清单等），由系统自动填充"},
+        "docs": {"{stats_json}": "项目统计 JSON（完成率/风险/任务清单等），由系统自动填充",
+                 "{generation_requirements}": "规则库生成要求"},
         "examples": [],   # 面板可贴您期望的样稿（每份用 "---" 分隔）
     },
     "enrich_tasks": {
@@ -114,10 +116,13 @@ PROMPT_DEFAULTS: Dict[str, Dict] = {
             "资源人力/预算成本/下周计划/决策请求 同理一一对应。\n"
             "3. 模板中的示例数字/日期/人名只是格式示意，一律以数据集为准替换；数据集里没有的信息留白或用「—」，绝不编造。\n"
             "4. 叙述性文字（概述、结论）可参考模板的写法风格，但所有数字、日期、编号必须核对数据集。\n"
-            "5. 输出完整 HTML（h1/h2/p/table/ul/li），不用 markdown 符号，不要代码块包裹。"
+            "5. 必须遵守【生成要求】（用户对文稿的固定要求）。\n"
+            "6. 输出完整 HTML（h1/h2/p/table/ul/li），不用 markdown 符号，不要代码块包裹。\n\n"
+            "【生成要求】\n{generation_requirements}"
         ),
         "docs": {"{template_text}": "用户上传的周报模板原文",
-                 "{dataset_text}": "数据集板块文本（按板块组织，系统自动填充）"},
+                 "{dataset_text}": "数据集板块文本（按板块组织，系统自动填充）",
+                 "{generation_requirements}": "规则库生成要求"},
         "examples": [],
     },
     "rule_intent": {
@@ -125,16 +130,53 @@ PROMPT_DEFAULTS: Dict[str, Dict] = {
         "system": "你是项目管理制度助手。把用户用自然语言表达的规则/工作要求，转换为结构化规则 JSON，只输出 JSON。",
         "user": (
             "用户想给周报系统添加一条规则或工作要求。请理解意图并输出 JSON，字段：\n"
-            "- type（必填）：规则类型，可选数值阈值 rule / 文本要求 requirement / 状态词映射 status_map / 列名映射 column_map / 忽略词 ignore / 其他 other\n"
+            "- type（必填）：规则类型，可选数值阈值 rule / 分析要求 requirement（影响数据筛选分析）/ 生成要求 generation_requirement（影响文稿生成） / 状态词映射 status_map / 列名映射 column_map / 忽略词 ignore / 其他 other\n"
             "- title（必填）：规则的中文短标题\n"
             "- description（必填）：用户原始需求的忠实概括（中文，不要曲解）\n"
             "- key（可选）：若是对已有规则库字段的修改，给出字段名（如 delay_days_danger / slow_progress_pct / risk_near_end_days）\n"
             "- value（可选）：数值型规则的目标值（数字）；状态词映射填 {变体词: 标准状态}；列名映射填 {表头: 字段}；忽略词填字符串列表\n"
             "- scope（可选）：适用环节，可选 解析/分析/呈现/全部，默认全部\n"
             "- applies_to（可选）：适用对象，可选 任务/风险/周报/看板/全部，默认全部\n"
+            "判断依据：涉及「如何筛选/抽取/归类数据」→ 分析要求 requirement；涉及「周报怎么写/格式/排序/口径」→ 生成要求 generation_requirement。\n"
             "只输出 JSON 对象，不要其他文字。若用户不是表达规则而是其它意图，输出 {\"type\":\"other\",\"title\":\"\",\"description\":\"\"}。\n\n用户说：{instruction}"
         ),
         "docs": {"{instruction}": "用户用自然语言描述的规则需求"},
+        "examples": [],
+    },
+    "rule_batch_intent": {
+        "label": "规则文档批量理解（一键导入）",
+        "system": "你是项目管理制度助手。从规则文档中批量提取规则，输出 JSON 数组，每项含 type/title/description，只输出数组。",
+        "user": (
+            "下面是一份项目管理制度/规则文档。请把其中的每一条规则/工作要求提取为 JSON 数组元素：\n"
+            "{\"type\":\"rule|requirement|generation_requirement|status_map|column_map|ignore\","
+            "\"title\":\"中文短标题\",\"description\":\"忠实概括原文（不要曲解）\",\"value\":null,\"key\":null}\n"
+            "判断依据：涉及「如何筛选/抽取/归类数据」→ requirement（分析要求）；"
+            "涉及「周报怎么写/格式/排序/口径」→ generation_requirement（生成要求）；"
+            "数值阈值 → rule（value 填数字，key 尽量填对应字段名：风险超期天数→delay_days_danger、进度偏慢阈值→slow_progress_pct、临近预警天数→risk_near_end_days）；"
+            "状态词/列名/忽略词 → 对应类型。\n"
+            "规则文档：\n{rule_text}"
+        ),
+        "docs": {"{rule_text}": "用户上传的规则文档文本"},
+        "examples": [],
+    },
+    "ai_analysis": {
+        "label": "分析 AI（上传时辅助结构化）",
+        "system": "你是严谨的数据分析助手，只输出 JSON。所有抽取内容必须来自文档原文，禁止编造。",
+        "user": (
+            "下面是一份项目文档的 markdown 内容。请按【分析要求】抽取结构化数据，输出 JSON：\n"
+            "{\"sections\":[{\"kind\":\"task|risk|issue|decision|milestone|metric\","
+            "\"name\":\"条目名\",\"fields\":{\"关键字段\":\"值\"},\"source_note\":\"来源行片段\"}],"
+            "\"summary\":\"一句话数据概览\"}\n"
+            "【分析要求】\n{requirements}\n\n"
+            "要求：\n"
+            "1. 任务/成果/计划 → kind=task；风险/预警 → risk；里程碑 → milestone；"
+            "指标/数值 → metric；决策/申请 → decision；依赖/协作 → issue。\n"
+            "2. fields 保留原文关键列（进度/负责人/状态/日期/级别/影响等），列名用中文。\n"
+            "3. 数字/日期/人名必须来自原文，禁止编造；不确定的字段留空。\n"
+            "4. 每个板块最多 6 条，总量 60 条以内，保证 JSON 完整闭合。\n"
+            "5. 只输出 JSON，不要其他文字。\n\n文档内容：\n{document_text}"
+        ),
+        "docs": {"{requirements}": "规则库分析要求（requirements）", "{document_text}": "markitdown 转换后的文档 markdown"},
         "examples": [],
     },
     "ai_pipeline_filter": {
@@ -177,13 +219,16 @@ PROMPT_DEFAULTS: Dict[str, Dict] = {
             "请生成一份{report_type}。要求：\n"
             "1. 严格按【模板】的章节结构与标题组织（模板有几节就写几节，不要擅自增删章节）。\n"
             "2. 内容使用【分析结论】的要点 + 【结构化数据】的真实值填充；数字/日期/人名一律来自数据。\n"
-            "3. 输出完整 HTML（h1/h2/p/table/ul/li），不用 markdown 符号，不要代码块包裹。\n\n"
+            "3. 必须遵守【生成要求】（用户对文稿的固定要求，所有周报都要满足）。\n"
+            "4. 输出完整 HTML（h1/h2/p/table/ul/li），不用 markdown 符号，不要代码块包裹。\n\n"
+            "【生成要求】\n{generation_requirements}\n\n"
             "【模板】\n{template_text}\n\n"
             "【分析结论】\n{analysis}\n\n"
             "【结构化数据】\n{data_json}"
         ),
         "docs": {"{report_type}": "周报/日报", "{template_text}": "周报模板",
-                 "{analysis}": "AI 分析结论", "{data_json}": "结构化数据 JSON"},
+                 "{analysis}": "AI 分析结论", "{data_json}": "结构化数据 JSON",
+                 "{generation_requirements}": "规则库生成要求"},
         "examples": [],
     },
 }
@@ -260,11 +305,22 @@ def save_prompts(overrides: Dict) -> Dict:
     return load_prompts()
 
 
-def reset_prompts() -> None:
-    """恢复全部默认。"""
+def reset_prompts(keys: Optional[List[str]] = None) -> None:
+    """恢复默认。keys=None 全部恢复；否则只恢复指定键。"""
     try:
-        if os.path.exists(PROMPTS_FILE):
-            os.remove(PROMPTS_FILE)
+        if keys is None:
+            if os.path.exists(PROMPTS_FILE):
+                os.remove(PROMPTS_FILE)
+            return
+        over = _read_overrides()
+        changed = False
+        for k in keys:
+            if k in over:
+                del over[k]
+                changed = True
+        if changed:
+            with open(PROMPTS_FILE, "w", encoding="utf-8") as f:
+                json.dump(over, f, ensure_ascii=False, indent=2)
     except Exception:
         pass
 

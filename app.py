@@ -114,7 +114,7 @@ def _latest_prev_stats(name: str = "") -> Optional[Dict]:
             return e.get("stats")
     return None
 
-ALLOWED_EXTS = {".xlsx", ".xlsm", ".csv", ".docx", ".pdf"}
+ALLOWED_EXTS = {".xlsx", ".xlsm", ".csv", ".docx", ".pdf", ".txt", ".md", ".html", ".htm"}
 
 app = FastAPI(title="PM Report Agent", version="0.11.0")
 
@@ -231,6 +231,7 @@ class RulesIn(BaseModel):
     status_words: Optional[Dict[str, str]] = None
     # 对话式管理：AI 的工作要求（规则引擎之外，注入 AI 生成的指令）
     requirements: Optional[List[Dict]] = None
+    generation_requirements: Optional[List[Dict]] = None
 
 
 class RenameIn(BaseModel):
@@ -428,6 +429,21 @@ async def workspace_load(files: List[UploadFile] = File(...),
             datastore.add_items(source_id, items)
             # 留痕：增添操作（上传成功记录）
             datastore.log_source_op("add", source_id, fname, {"sheets": len(sheet_projects)})
+            # 一条线架构：上传即 AI 辅助分析（非结构化 → 结构化补全，注入分析要求 requirements）
+            # 仅对文本类/规则解析不充分的文件调用；失败静默（保留规则解析结果）
+            if ext not in (".xlsx", ".xlsm"):
+                try:
+                    from pmo_report import datastore as _ds
+                    src_rec = _ds.get_source(source_id)
+                    stored = src_rec.get("stored_path", "") if src_rec else ""
+                    if stored and os.path.exists(stored):
+                        from pmo_report.ai_analysis import ai_assist_analysis
+                        r = ai_assist_analysis(source_id, stored, ext, ai_mod, prompts_mod, rules_mod,
+                                               existing_items=items)
+                        if r.get("added"):
+                            print(f"  [ai_analysis] {fname}: {r.get('note')}")
+                except Exception:
+                    pass
     _persist_workspace()
     return {"ok": True, "created": created, "renamed": renamed,
             "is_dataset": is_dataset, "workspace": _workspace_view()}
@@ -1011,9 +1027,12 @@ def dataset_report(payload: DatasetReportIn):
     if not template_text:
         raise HTTPException(400, "请提供周报模板（文本，或在前端上传模板文档）")
     dataset_text = sections_to_markdown(sections)
+    gen_reqs = rules_mod.load_rules().get("generation_requirements") or []
+    gen_reqs_text = "\n".join(f"- {r.get('title')}: {r.get('description')}" for r in gen_reqs) or "（无）"
     entry = prompts_mod.get_prompt("dataset_report")
     prompt = prompts_mod.render_user(entry, {"template_text": template_text[:8000],
-                                             "dataset_text": dataset_text[:20000]})
+                                             "dataset_text": dataset_text[:20000],
+                                             "generation_requirements": gen_reqs_text})
     out = ai_mod.call_with_cache(
         "dataset_report",
         [{"role": "system", "content": entry.get("system", "")},
@@ -1095,9 +1114,12 @@ def ai_pipeline_run(payload: AiPipelineIn):
             if not template:
                 from pmo_report.report import ReportGenerator
                 template = ReportGenerator.get_template_text()
+            gen_reqs2 = rules_mod.load_rules().get("generation_requirements") or []
+            gen_reqs2_text = "\n".join(f"- {r.get('title')}: {r.get('description')}" for r in gen_reqs2) or "（无）"
             entry = prompts_mod.get_prompt("dataset_report")
             prompt = prompts_mod.render_user(entry, {"template_text": template[:8000],
-                                                     "dataset_text": ds_text[:20000]})
+                                                     "dataset_text": ds_text[:20000],
+                                                     "generation_requirements": gen_reqs2_text})
             out = ai_mod.call_with_cache(
                 "dataset_report",
                 [{"role": "system", "content": entry.get("system", "")},
@@ -1249,6 +1271,15 @@ def rules_converse_confirm(payload: RulesConfirmIn):
     applied = {"type": typ, "title": draft.get("title", ""), "detail": ""}
     if typ == "number" or (typ in ("rule", "数值阈值") and draft.get("key")):
         key = str(draft.get("key") or "")
+        # 无 key 时按描述启发式推断字段（AI 未给 key 的兜底）
+        if not key:
+            desc = str(draft.get("description") or "") + str(draft.get("title") or "")
+            if any(k in desc for k in ("风险", "超期", "delay")):
+                key = "delay_days_danger"
+            elif any(k in desc for k in ("进度", "偏慢", "落后", "slow")):
+                key = "slow_progress_pct"
+            elif any(k in desc for k in ("临近", "预警", "near")):
+                key = "risk_near_end_days"
         val = draft.get("value")
         if key and val is not None and key in rules_mod.DEFAULT_RULES:
             try:
@@ -1256,6 +1287,8 @@ def rules_converse_confirm(payload: RulesConfirmIn):
                 applied["detail"] = f"{key} = {rules[key]}"
             except (TypeError, ValueError):
                 raise HTTPException(400, f"字段 {key} 的数值无效")
+        elif not key:
+            raise HTTPException(400, "无法识别该数值规则对应的字段，请换一种表达")
     elif typ in ("status_map", "状态词映射"):
         for src, dst in (draft.get("value") or {}).items():
             s, d = str(src).strip(), str(dst).strip()
@@ -1274,8 +1307,8 @@ def rules_converse_confirm(payload: RulesConfirmIn):
             if w and w not in rules.setdefault("ignore_keywords", []):
                 rules["ignore_keywords"].append(w)
         applied["detail"] = f"忽略词 {rules['ignore_keywords']}"
-    elif typ in ("requirement", "文本要求"):
-        # 文本要求：作为给 AI 的「工作要求」存 requirements（后续 AI 生成时注入）
+    elif typ in ("requirement", "文本要求", "analysis_requirement", "分析要求"):
+        # 分析要求：作为给「分析 AI」的要求存 requirements（上传时 AI 辅助分析注入）
         reqs = rules.setdefault("requirements", [])
         title = str(draft.get("title") or "").strip()
         desc = str(draft.get("description") or "").strip()
@@ -1283,13 +1316,179 @@ def rules_converse_confirm(payload: RulesConfirmIn):
             reqs.append({"title": title, "description": desc,
                          "scope": draft.get("scope") or "全部",
                          "applies_to": draft.get("applies_to") or "全部"})
-        applied["detail"] = f"工作要求「{title}」已加入（共 {len(reqs)} 条）"
+        applied["detail"] = f"分析要求「{title}」已加入（共 {len(reqs)} 条）"
+    elif typ in ("generation_requirement", "生成要求"):
+        # 生成要求：作为给「生成文稿 AI」的要求存 generation_requirements（所有生成方式注入）
+        reqs = rules.setdefault("generation_requirements", [])
+        title = str(draft.get("title") or "").strip()
+        desc = str(draft.get("description") or "").strip()
+        if title and desc and all(r.get("title") != title for r in reqs):
+            reqs.append({"title": title, "description": desc,
+                         "scope": draft.get("scope") or "全部",
+                         "applies_to": draft.get("applies_to") or "全部"})
+        applied["detail"] = f"生成要求「{title}」已加入（共 {len(reqs)} 条）"
     else:
         raise HTTPException(400, f"暂不支持该规则类型: {typ}")
     rules_mod.save_rules(rules)
     _recompute_all()
     return {"ok": True, "rules": rules, "applied": applied,
             "note": "已确认并写入规则库"}
+
+
+class RuleDeleteIn(BaseModel):
+    """删除规则：kind ∈ requirement/generation_requirement/ignore/status_word/column_alias；
+    index 为列表下标（requirements 类），key 为映射/忽略词键名。"""
+    kind: str
+    index: Optional[int] = None
+    key: str = ""
+
+
+@app.post("/api/rules/delete")
+def delete_rule(payload: RuleDeleteIn):
+    """删除单条规则（分析要求/生成要求/忽略词/状态词/列名映射）。"""
+    rules = rules_mod.load_rules()
+    kind = payload.kind
+    if kind in ("requirement", "generation_requirement"):
+        field = "requirements" if kind == "requirement" else "generation_requirements"
+        idx = payload.index
+        items = rules.get(field) or []
+        if idx is None or not (0 <= idx < len(items)):
+            raise HTTPException(400, "下标越界")
+        removed = items.pop(idx)
+        rules[field] = items
+        rules_mod.save_rules(rules)
+        return {"ok": True, "removed": removed.get("title", ""), "note": f"已删除「{removed.get('title')}」"}
+    if kind == "ignore":
+        key = (payload.key or "").strip()
+        ignore = rules.get("ignore_keywords") or []
+        if key in ignore:
+            ignore.remove(key)
+            rules["ignore_keywords"] = ignore
+            rules_mod.save_rules(rules)
+            return {"ok": True, "removed": key, "note": f"已删除忽略词「{key}」"}
+    if kind == "status_word":
+        key = (payload.key or "").strip()
+        sw = rules.get("status_words") or {}
+        if key in sw:
+            del sw[key]
+            rules["status_words"] = sw
+            rules_mod.save_rules(rules)
+            return {"ok": True, "removed": key, "note": f"已删除状态词映射「{key}」"}
+    if kind == "column_alias":
+        key = (payload.key or "").strip()
+        ca = rules.get("column_aliases") or {}
+        if key in ca:
+            del ca[key]
+            rules["column_aliases"] = ca
+            rules_mod.save_rules(rules)
+            return {"ok": True, "removed": key, "note": f"已删除列名映射「{key}」"}
+    raise HTTPException(400, "未找到要删除的规则")
+
+
+class RuleBatchDeleteIn(BaseModel):
+    """批量删除：kind + indices（requirements 类）或 keys（映射/忽略词）。"""
+    kind: str
+    indices: List[int] = []
+    keys: List[str] = []
+
+
+@app.post("/api/rules/batch-delete")
+def batch_delete_rules(payload: RuleBatchDeleteIn):
+    """批量删除规则（支持 requirements/generation_requirements 按下标；ignore/映射 按 key）。"""
+    rules = rules_mod.load_rules()
+    kind = payload.kind
+    removed: List[str] = []
+    if kind in ("requirement", "generation_requirement"):
+        field = "requirements" if kind == "requirement" else "generation_requirements"
+        items = rules.get(field) or []
+        for idx in sorted(set(payload.indices), reverse=True):
+            if 0 <= idx < len(items):
+                removed.append(items.pop(idx).get("title", ""))
+        rules[field] = items
+    elif kind == "ignore":
+        ignore = rules.get("ignore_keywords") or []
+        for k in payload.keys:
+            if k in ignore:
+                ignore.remove(k)
+                removed.append(k)
+        rules["ignore_keywords"] = ignore
+    elif kind == "status_word":
+        sw = rules.get("status_words") or {}
+        for k in payload.keys:
+            if k in sw:
+                removed.append(k)
+                del sw[k]
+        rules["status_words"] = sw
+    elif kind == "column_alias":
+        ca = rules.get("column_aliases") or {}
+        for k in payload.keys:
+            if k in ca:
+                removed.append(k)
+                del ca[k]
+        rules["column_aliases"] = ca
+    else:
+        raise HTTPException(400, f"不支持批量删除类型: {kind}")
+    rules_mod.save_rules(rules)
+    _recompute_all()
+    return {"ok": True, "removed": removed, "note": f"已批量删除 {len(removed)} 条"}
+
+
+class RuleImportTextIn(BaseModel):
+    text: str = ""
+
+
+@app.post("/api/rules/import-text")
+def import_rules_text(payload: RuleImportTextIn):
+    """一键导入规则文档（txt/md/Word 提取的文本）→ AI 批量理解成多条规则（待确认，不直接写入）。
+
+    返回 {ok, drafts: [规则JSON...], note}。前端逐条确认后调 converse/confirm 写入。"""
+    from pmo_report import prompts as prompts_mod
+    text = (payload.text or "").strip()
+    if not text:
+        raise HTTPException(400, "文本为空")
+    entry = prompts_mod.get_prompt("rule_batch_intent")
+    prompt = prompts_mod.render_user(entry, {"rule_text": text[:8000]})
+    try:
+        out = ai_mod.call_with_cache(
+            "rule_batch_intent",
+            [{"role": "system", "content": entry.get("system", "")},
+             {"role": "user", "content": prompt}],
+            temperature=0.1, max_tokens=1500,
+        )
+    except Exception as e:
+        raise HTTPException(502, f"AI 批量理解失败：{e}")
+    import re as _re
+    m = _re.search(r"\[.*\]", out or "", _re.S)
+    drafts = []
+    if m:
+        try:
+            drafts = json.loads(m.group(0))
+        except Exception:
+            drafts = []
+    drafts = [d for d in drafts if isinstance(d, dict) and d.get("title")]
+    return {"ok": True, "drafts": drafts, "note": f"AI 批量理解出 {len(drafts)} 条规则，请逐条确认"}
+
+
+@app.post("/api/rules/template-extract")
+async def rules_template_extract(file: UploadFile = File(...)):
+    """上传规则文档（txt/md/docx/pdf/html）→ 提取文本，供 import-text 使用。"""
+    tmp = _save_upload_to_tmp(file)
+    try:
+        from pmo_report.parsers.text_parser import _extract_text_docx
+        ext = os.path.splitext(file.filename or "")[1].lower()
+        if ext in (".docx",):
+            text = _extract_text_docx(tmp)
+        elif ext in (".pdf",):
+            from pmo_report.parsers.text_parser import _extract_text_pdf
+            text = _extract_text_pdf(tmp, use_ocr=False)
+        else:
+            with open(tmp, "r", encoding="utf-8", errors="replace") as f:
+                text = f.read()
+    except Exception as e:
+        raise HTTPException(500, f"规则文档提取失败: {e}")
+    finally:
+        os.path.exists(tmp) and os.remove(tmp)
+    return {"ok": True, "filename": file.filename or "", "text": text[:20000]}
 
 
 @app.get("/api/rules/export")
@@ -1410,11 +1609,21 @@ def save_prompts(payload: PromptsSaveIn):
             "note": "已保存提示词（本地 config/prompts.json，之后生成/提炼/模板解析立即生效）"}
 
 
+class PromptsResetIn(BaseModel):
+    keys: Optional[List[str]] = None
+
+
 @app.post("/api/settings/prompts/reset")
-def reset_prompts():
+def reset_prompts(payload: Optional[PromptsResetIn] = None):
     from pmo_report import prompts as prompts_mod
-    prompts_mod.reset_prompts()
-    return {"ok": True, "items": prompts_mod.prompts_status()["items"], "note": "已恢复全部默认提示词"}
+    keys = (payload.keys if payload and payload.keys else None)
+    if keys:
+        prompts_mod.reset_prompts(keys=keys)
+        note = f"已恢复 {len(keys)} 项默认提示词"
+    else:
+        prompts_mod.reset_prompts()
+        note = "已恢复全部默认提示词"
+    return {"ok": True, "items": prompts_mod.prompts_status()["items"], "note": note}
 
 
 # ================= 模板 =================
@@ -1506,6 +1715,56 @@ def template_history():
     items = [{"ts": h.get("ts", ""), "fmt": h.get("fmt", ""),
               "preview": (h.get("html") or "")[:200]} for h in reversed(hist)]
     return {"items": items}
+
+
+# ================= 模板库（命名入库 / 分类 / 按日期 / 生成时选用） =================
+class TemplateLibIn(BaseModel):
+    name: str = ""
+    html: str = ""
+    ttype: str = "week"      # week/day/other
+    category: str = ""
+
+
+@app.get("/api/template/lib")
+def template_lib_list(ttype: str = "", category: str = ""):
+    """模板库列表（新→旧；可按类型/分类过滤）。"""
+    from pmo_report import datastore
+    items = datastore.list_template_lib(ttype=ttype, category=category)
+    cats = datastore.template_categories()
+    latest = datastore.latest_template_lib(ttype=ttype)
+    return {"items": items, "categories": cats,
+            "latest_id": latest["id"] if latest else None}
+
+
+@app.post("/api/template/lib")
+def template_lib_save(payload: TemplateLibIn):
+    """命名入库模板（人工确认后保存；ttype 区分周报/日报，category 可自定义分类）。"""
+    from pmo_report import datastore
+    if not payload.html.strip():
+        raise HTTPException(400, "模板内容为空")
+    tid = datastore.save_template_lib(
+        name=(payload.name or "").strip() or f"模板{datetime.now().strftime('%m%d%H%M')}",
+        html=payload.html, ttype=payload.ttype or "week", category=payload.category or "")
+    return {"ok": True, "id": tid, "note": "已命名入库"}
+
+
+@app.delete("/api/template/lib/{tid}")
+def template_lib_delete(tid: int):
+    from pmo_report import datastore
+    datastore.delete_template_lib(tid)
+    return {"ok": True, "note": "已删除模板"}
+
+
+@app.get("/api/template/lib/{tid}/apply")
+def template_lib_apply(tid: int):
+    """把库中某模板设为当前生效模板（生成默认用）。"""
+    from pmo_report import datastore
+    t = datastore.get_template_lib(tid)
+    if not t:
+        raise HTTPException(404, "模板不存在")
+    ReportGenerator.save_custom_template(t["html"])
+    _append_template_history(fmt="html", html=t["html"])
+    return {"ok": True, "note": f"已应用模板「{t['name']}」"}
 
 
 @app.post("/api/template/reset")
@@ -1676,6 +1935,123 @@ async def generate(
         },
     })
     return {"generated": generated}
+
+
+class GenerateOneIn(BaseModel):
+    """一条线生成：选数据源 + 模板（可选）→ 后端按数据形态自动选管线。"""
+    source_id: str = ""
+    template_id: Optional[int] = None
+    template_text: str = ""        # 未选库中模板时，可直传模板文本
+    report_type: str = "week"
+    project_name: str = ""
+    period: str = ""
+    use_ai: bool = True
+
+
+@app.post("/api/generate/one")
+def generate_one(payload: GenerateOneIn):
+    """一条线生成入口（取代三种方式分开调）。
+
+    按数据形态自动选管线：
+      - 该源文件有 dataset_sections（多 sheet 数据集）→ 模板+数据集生成
+      - 该源文件关联的 sheet 有 tasks → 规则引擎统计 + AI 增强
+      - 都没有 → AI 主链路（从原文 markdown 分析再生成）
+    模板：优先用 template_id 指定的库模板；否则 template_text；都没有则 AI 自主编写。
+    """
+    from pmo_report import datastore
+    from pmo_report.dataset import sections_to_markdown
+    from pmo_report import prompts as prompts_mod
+    from pmo_report.ai_pipeline import doc_to_markdown
+
+    src = datastore.get_source(payload.source_id) if payload.source_id else None
+    if not src:
+        raise HTTPException(404, "数据源不存在")
+    stored = src.get("stored_path", "")
+    ext = src.get("ext", "")
+
+    # 模板解析：库中模板 > 直传文本 > 无（规则引擎用默认 HTML 模板；AI 方式自主编写）
+    template_text = (payload.template_text or "").strip()
+    if payload.template_id:
+        t = datastore.get_template_lib(payload.template_id)
+        if t:
+            template_text = t.get("html") or ""
+
+    gen_reqs = rules_mod.load_rules().get("generation_requirements") or []
+    gen_reqs_text = "\n".join(f"- {r.get('title')}: {r.get('description')}" for r in gen_reqs) or "（无）"
+
+    # 1) 有 dataset_sections → 模板+数据集生成
+    sections = datastore.get_dataset_sections(payload.source_id)
+    if sections:
+        if not template_text:
+            template_text = "一、总体进展\n二、关键数据\n三、风险与问题\n四、下周计划"
+        dataset_text = sections_to_markdown(sections)
+        entry = prompts_mod.get_prompt("dataset_report")
+        prompt = prompts_mod.render_user(entry, {
+            "template_text": template_text[:8000],
+            "dataset_text": dataset_text[:20000],
+            "generation_requirements": gen_reqs_text,
+        })
+        out = ai_mod.call_with_cache(
+            "dataset_report",
+            [{"role": "system", "content": entry.get("system", "")},
+             {"role": "user", "content": prompt}],
+            temperature=0.3, max_tokens=4000,
+        )
+        html = _strip_code_block(out or "")
+        if "<" in html and ">" in html:
+            return {"ok": True, "mode": "dataset", "html": html,
+                    "note": f"已按模板从数据集生成（{len(sections)} 个板块）"}
+
+    # 2) 有关联 sheet 的 tasks → 规则引擎 + AI 增强
+    sheet_objs = [sh for sh in WORKSPACE["sheets"].values() if sh.get("source_id") == payload.source_id]
+    if sheet_objs:
+        rules = load_rules()
+        stats_list = []
+        for sh in sheet_objs:
+            proj = sh["project"]
+            try:
+                st = analyze(proj, rules=rules)
+                stats_list.append(st)
+            except Exception:
+                continue
+        if stats_list:
+            merged = _merge_stats(stats_list, name=payload.project_name or src["filename"],
+                                  period=payload.period, rules=rules)
+            gen = ReportGenerator(template=(template_text if template_text and '<' in template_text else None))
+            res = gen.render(merged, use_ai=bool(payload.use_ai))
+            html = res.get("report") or ""
+            if "<" not in html or ">" not in html:
+                html = res.get("report_html") or html
+            return {"ok": True, "mode": "rules", "html": html,
+                    "note": f"已用规则引擎统计 + AI 增强生成（{len(sheet_objs)} 个 sheet）"}
+
+    # 3) 都没有 → AI 主链路（从原文分析）
+    try:
+        md_text = doc_to_markdown(stored)
+        from pmo_report.ai_pipeline import ai_filter_data, ai_analyze, ai_present
+        structured = ai_filter_data(md_text, ai_mod, prompts_mod)
+        reqs = rules_mod.load_rules().get("requirements") or []
+        analysis = ai_analyze(structured, reqs, ai_mod, prompts_mod)
+        html = ai_present(analysis, structured, template_text, ai_mod, prompts_mod,
+                          report_type=payload.report_type,
+                          generation_requirements=gen_reqs)
+        if "<" in html and ">" in html:
+            return {"ok": True, "mode": "ai_pipeline", "html": html,
+                    "note": f"AI 主链路生成（原文 {len(md_text)} 字符，筛选 {len((structured or {}).get('sections', []))} 条）"}
+    except Exception as e:
+        raise HTTPException(502, f"生成失败：{e}")
+    raise HTTPException(502, "未能生成周报（请检查数据源内容）")
+
+
+def _strip_code_block(out: str) -> str:
+    out = (out or "").strip()
+    if out.startswith("```"):
+        out = re.sub(r"^```(?:html)?\s*", "", out)
+        out = re.sub(r"```\s*$", "", out)
+    m = re.search(r"```(?:html)?\s*(.*?)```", out, re.S)
+    if m:
+        out = m.group(1).strip()
+    return out
 
 
 def _task_completeness(t: Task) -> int:

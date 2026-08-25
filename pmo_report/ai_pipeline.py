@@ -137,14 +137,19 @@ def ai_analyze(structured: Dict, requirements: List[Dict], ai_module, prompts_mo
 
 
 def ai_present(analysis: str, structured: Dict, template_text: str,
-               ai_module, prompts_module, report_type: str = "week") -> str:
-    """AI 呈现：按模板结构 + 分析结论 + 结构化数据，生成最终周报（HTML）。"""
+               ai_module, prompts_module, report_type: str = "week",
+               generation_requirements: Optional[List[Dict]] = None) -> str:
+    """AI 呈现：按模板结构 + 分析结论 + 结构化数据，生成最终周报（HTML）。
+    generation_requirements: 规则库中的「生成要求」（所有生成方式统一注入）。"""
     entry = prompts_module.get_prompt("ai_pipeline_present")
+    gen_reqs_text = "\n".join(f"- {r.get('title')}: {r.get('description')}"
+                               for r in (generation_requirements or [])) or "（无）"
     prompt = prompts_module.render_user(entry, {
         "report_type": "周报" if report_type == "week" else "日报",
         "template_text": (template_text or "一、总体进展\n二、关键数据\n三、风险与问题\n四、下周计划")[:8000],
         "analysis": analysis[:4000],
         "data_json": json.dumps(structured, ensure_ascii=False)[:15000],
+        "generation_requirements": gen_reqs_text,
     })
     out = ai_module.call_with_cache(
         "ai_pipeline_present",

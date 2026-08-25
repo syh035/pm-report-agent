@@ -210,37 +210,57 @@
     </div>
 
     <!-- 规则面板 -->
-    <!-- 模板&生成面板（模板管理 + 趋势 + 三种生成方式收拢） -->
+    <!-- 模板&生成面板（一条线：模板准备 → 生成） -->
     <div class="panel" id="panel-template">
       <div class="card">
-        <h2>📋 模板（上传文档 + AI 解析）</h2>
-        <div class="row" style="margin-bottom:12px;flex-wrap:wrap;">
+        <h2>模板准备</h2>
+        <p style="font-size:12px;color:var(--muted);margin-bottom:10px;">
+          上传周报模板文档（Word/PDF/HTML/txt）→ AI 解析 → 人工确认/微调 → 命名入库。
+          不准备模板时，生成将让 AI 根据数据自主编写。
+        </p>
+        <div class="row" style="margin-bottom:8px;flex-wrap:wrap;">
           <input type="file" id="templateFile" accept=".docx,.pdf,.html,.md,.txt">
-          <button class="btn btn-primary" onclick="parseTemplate()">上传模板并用 AI 解析</button>
-          <button class="btn btn-outline" onclick="loadTemplate()">载入当前模板</button>
-          <button class="btn btn-danger" onclick="resetTemplate()">恢复默认</button>
-          <button class="btn btn-outline" onclick="window.open('/lib/templates.html','_blank')">📋 模板库（版本历史）</button>
+          <button class="btn btn-primary" onclick="parseTemplate()">上传并用 AI 解析</button>
+          <button class="btn btn-outline" onclick="window.open('/lib/templates.html','_blank')">模板库</button>
+        </div>
+        <div id="tplConfirmBox" style="display:none;border:1px solid var(--border);border-radius:8px;padding:10px;margin-top:8px;background:#FAFBFC;">
+          <div class="row" style="gap:6px;flex-wrap:wrap;margin-bottom:8px;">
+            <input type="text" id="tplName" placeholder="模板名称（必填，如：星云支付周报）" style="flex:1;min-width:180px;font-size:12px;">
+            <select id="tplType" style="font-size:12px;padding:6px 8px;">
+              <option value="week">周报</option>
+              <option value="day">日报</option>
+              <option value="other">其他</option>
+            </select>
+            <input type="text" id="tplCategory" placeholder="分类（可选，如：支付项目）" style="width:160px;font-size:12px;">
+            <button class="btn btn-primary" style="font-size:12px;padding:4px 10px" onclick="tplSaveLib()">确认入库</button>
+            <button class="btn btn-outline" style="font-size:12px;padding:4px 10px" onclick="tplRegenerate()">再次对话微调</button>
+            <button class="btn btn-outline" style="font-size:12px;padding:4px 10px" onclick="tplEditHtml()">直接编辑</button>
+            <button class="btn btn-danger" style="font-size:12px;padding:4px 10px" onclick="tplCancel()">放弃</button>
+          </div>
+          <div class="msg" id="tplConfirmMsg"></div>
         </div>
         <div class="msg" id="templateMsg"></div>
         <div id="templatePreview" style="border:1px solid var(--border);border-radius:8px;padding:14px;background:#fff;"></div>
       </div>
       <div class="card">
-        <h2>📈 项目趋势（按已保存的历史统计）</h2>
-        <canvas id="trendCanvas" width="760" height="220" style="max-width:100%;"></canvas>
-        <div id="trendMsg" style="font-size:12px;color:var(--muted);"></div>
-      </div>
-      <div class="card">
-        <h2>🛠 生成文稿（规则引擎）</h2>
-        <div class="row" style="flex-wrap:wrap;">
+        <h2>生成周报</h2>
+        <div class="row" style="gap:8px;flex-wrap:wrap;align-items:center;">
           <div style="display:flex;gap:4px;">
-            <button class="btn btn-primary" id="rtWeek" onclick="setReportType('week')">📅 周报</button>
-            <button class="btn btn-outline" id="rtDay" onclick="setReportType('day')">📆 日报</button>
+            <button class="btn btn-primary" id="rtWeek" onclick="setReportType('week')">周报</button>
+            <button class="btn btn-outline" id="rtDay" onclick="setReportType('day')">日报</button>
           </div>
-          <input type="text" id="genProject" placeholder="项目名称（可选）" style="width:180px">
-          <input type="text" id="genPeriod" placeholder="周期，如 2026-W33" style="width:140px">
-          <label style="font-size:13px;display:flex;gap:4px;align-items:center;"><input type="checkbox" id="genUseAI" checked>AI增强</label>
+          <select id="genSourceSel" style="min-width:220px" title="数据源（上传时已分析，生成复用分析结果）">
+            <option value="">选择数据源…</option>
+          </select>
+          <select id="genTplSel" style="min-width:220px" title="模板（默认最新，可切库中其他版本）">
+            <option value="">模板：AI 自主编写</option>
+          </select>
+          <input type="text" id="genProject" placeholder="项目名称（可选）" style="width:160px">
+          <input type="text" id="genPeriod" placeholder="周期，如 2026-W33" style="width:130px">
+          <label style="font-size:12px;display:flex;gap:4px;align-items:center;"><input type="checkbox" id="genUseAI" checked>AI增强</label>
           <button class="btn btn-primary" onclick="generateReport()">生成</button>
         </div>
+        <div class="hint" style="margin-top:6px;" id="genHint"></div>
         <div class="msg" id="genMsg"></div>
         <div id="reportBox" class="report-content" style="margin-top:14px;min-height:200px;"></div>
         <div class="row" style="margin-top:12px;" id="exportRow" style="display:none;">
@@ -250,69 +270,19 @@
           <button class="btn btn-outline" onclick="saveToHistory()">存入历史</button>
         </div>
       </div>
-      <div class="card" style="border-color:var(--primary);">
-        <h2>🤖 AI 主链路（文档 → 筛选 → 分析 → 呈现）</h2>
-        <p style="font-size:12px;color:var(--muted);margin-bottom:10px;">
-          上传任意文档（Excel/Word/PDF）→ markitdown 转 markdown → AI 筛选结构化数据 → 按「规则库工作要求」分析 →
-          按模板生成周报。规则引擎作为兜底；无 Key 时自动回退。
-        </p>
-        <div class="row" style="gap:8px;flex-wrap:wrap;align-items:center;">
-          <select id="pipeSourceSel" style="min-width:220px">
-            <option value="">选择源文件…</option>
-          </select>
-          <select id="pipeTypeSel" style="min-width:120px">
-            <option value="week">📅 周报</option>
-            <option value="day">📆 日报</option>
-          </select>
-          <button class="btn btn-primary" onclick="runAiPipeline()">🚀 运行 AI 主链路</button>
-          <button class="btn btn-outline" style="font-size:12px;padding:4px 10px" onclick="window.open('/lib/rules.html','_blank')">⚙️ 工作要求(规则库)</button>
-        </div>
-        <div class="msg" id="pipeMsg"></div>
-        <div id="pipeDetail" style="font-size:11px;color:var(--muted);margin-top:6px;line-height:1.8;"></div>
-        <div id="pipeReportBox" class="report-content" style="margin-top:10px;min-height:120px;"></div>
-      </div>
-      <div class="card" style="border-color:var(--primary);">
-        <h2>📋 模板 + 数据集生成（严格按模板抓数）</h2>
-        <p style="font-size:12px;color:var(--muted);margin-bottom:10px;">
-          上传周报模板文档（Word/PDF/HTML/txt）＋ 选择多 sheet 数据集（Excel）→ AI 严格按模板章节结构，
-          从数据集各板块抓取真实数据生成周报。数据集板块可在「📦 源数据」详情中预览。
-        </p>
-        <div class="row" style="gap:8px;flex-wrap:wrap;align-items:center;">
-          <select id="dsSourceSel" style="min-width:220px" onchange="dsSourceChanged()">
-            <option value="">选择数据集源文件…</option>
-          </select>
-          <input type="file" id="dsTemplateFile" accept=".docx,.pdf,.html,.htm,.txt" style="font-size:12px;max-width:260px">
-          <button class="btn btn-outline" style="font-size:12px;padding:4px 10px" onclick="dsExtractTemplate()">载入模板</button>
-          <button class="btn btn-primary" onclick="dsGenerateReport()">🚀 按模板生成周报</button>
-        </div>
-        <div class="hint" style="margin-top:6px;" id="dsTemplateHint"></div>
-        <div class="msg" id="dsMsg"></div>
-        <div id="dsReportBox" class="report-content" style="margin-top:10px;min-height:120px;"></div>
-      </div>
     </div>
 
     <!-- 设置面板 -->
     <div class="panel" id="panel-settings">
       <div class="card">
-        <h2>🔧 AI 配置已移至独立库</h2>
+        <h2>AI 配置</h2>
         <p style="font-size:13px;color:var(--muted);margin-bottom:10px;">
-          API Key、模型、接口地址、Token 用量等 AI 配置已迁移到独立的「AI 配置库」。
+          API Key、模型、接口地址、Token 用量与全部提示词均已移至独立库统一管理。
         </p>
-        <div class="row">
-          <button class="btn btn-primary" onclick="location.href='/lib/ai.html'">⚙️ 打开 AI 配置库</button>
-        </div>
-      </div>
-      <div class="card">
-        <h2>AI 提示词（可编辑调试）</h2>
-        <p style="font-size:12px;color:var(--muted);margin-bottom:10px;">
-          修改保存后，生成/提炼/模板解析立即生效（仅本地 config/prompts.json）。
-          User 模板里的 <code>{stats_json}</code> 等占位符由系统填充；「示例」区可贴您期望的输出样稿（多个用 <code>---</code> 分隔），AI 会模仿其风格——比如您想让综述写成"本周完成 X 项，待完成 Y 项，卡点在于…"，把样稿贴进综述的示例即可。
-        </p>
-        <div id="promptList"></div>
-        <div class="row" style="margin-top:10px;">
-          <button class="btn btn-primary" onclick="saveAllPrompts()">保存全部修改</button>
-          <button class="btn btn-danger" onclick="resetAllPrompts()">恢复全部默认</button>
-          <span id="promptMsg" style="font-size:12px;color:var(--muted)"></span>
+        <div class="row" style="gap:8px;flex-wrap:wrap;">
+          <button class="btn btn-primary" onclick="location.href='/lib/ai.html'">AI 配置库</button>
+          <button class="btn btn-outline" onclick="location.href='/lib/prompts.html'">提示词库</button>
+          <button class="btn btn-outline" onclick="location.href='/lib/rules.html'">规则库（分析要求/生成要求）</button>
         </div>
       </div>
       <div class="card">
@@ -459,7 +429,7 @@ async function loadSourceList(){
     const d = await (await fetch('/api/sources')).json();
     const items = d.items||[];
     $('srcBadge').textContent = `(${items.length})`;
-    fillDsSourceSel(items);
+    loadGenSources();
     renderSourceList(items);
   }catch(e){ $('sourceList').textContent='源数据加载失败'; }
 }
@@ -498,72 +468,6 @@ function renderSourceList(items){
       <span style="margin-left:auto;font-size:10px;color:var(--muted)">${esc((s.uploaded_at||'').slice(5,16))}</span>
       <span style="font-size:10px;color:var(--muted)">${s.n_sheets||0}表</span>
     </div>`).join('') : '<div style="font-size:12px;color:var(--muted)">（无匹配源文件，可切「全部」或选日期）</div>';
-}
-function fillDsSourceSel(items){
-  const sel = $('dsSourceSel'); if(!sel) return;
-  const cur = sel.value;
-  sel.innerHTML = '<option value="">选择数据集源文件…</option>' + (items||[]).map(s=>
-    `<option value="${s.id}">${s.has_dataset?'🗂 ':''}${esc(s.filename)}</option>`).join('');
-  if(cur && items.some(s=>s.id===cur)) sel.value = cur;
-  // AI 主链路源文件选择：所有源文件（不限数据集）
-  const pipe = $('pipeSourceSel'); if(!pipe) return;
-  const curP = pipe.value;
-  pipe.innerHTML = '<option value="">选择源文件…</option>' + (items||[]).map(s=>
-    `<option value="${s.id}">${s.has_dataset?'🗂 ':''}${esc(s.filename)}</option>`).join('');
-  if(curP && items.some(s=>s.id===curP)) pipe.value = curP;
-}
-async function dsExtractTemplate(){
-  const f = $('dsTemplateFile').files[0];
-  if(!f){ alert('请先选择模板文件（Word/PDF/HTML/txt）'); return; }
-  let fd = new FormData(); fd.append('file', f);
-  const res = await fetch('/api/dataset/template-extract',{method:'POST',body:fd});
-  const d = await res.json();
-  if(!res.ok){ alert('模板提取失败: '+JSON.stringify(d)); return; }
-  window._dsTemplateText = d.text||'';
-  $('dsTemplateHint').textContent = `✅ 已载入模板「${d.filename||''}」（${(d.text||'').length} 字）`;
-}
-async function dsGenerateReport(){
-  const sid = $('dsSourceSel').value;
-  if(!sid){ alert('请先选择数据集源文件'); return; }
-  if(!window._dsTemplateText){ alert('请先上传并载入周报模板文档'); return; }
-  $('dsMsg').textContent = '⏳ AI 正在按模板从数据集抓数生成…';
-  $('dsReportBox').innerHTML = '';
-  try{
-    const res = await fetch('/api/dataset/report',{method:'POST',headers:{'Content-Type':'application/json'},
-      body:JSON.stringify({source_id:sid, template_text:window._dsTemplateText})});
-    const d = await res.json();
-    if(!res.ok){ $('dsMsg').textContent = '生成失败: '+(d.detail||JSON.stringify(d)); return; }
-    $('dsMsg').textContent = `✅ 已按模板生成（板块 ${(d.sections||[]).join('、')}）`;
-    $('dsReportBox').innerHTML = d.html||'';
-    if(d.metrics && d.metrics.length){
-      const ms = d.metrics.map(m=>Object.entries(m).map(([k,v])=>`${esc(k)}=${esc(v)}`).join('；')).join('<br>');
-      $('dsMsg').innerHTML += `<div style="font-size:11px;color:var(--muted);margin-top:6px;">🧮 数据集关键指标（供核对，AI 生成仅供参考）:<br>${ms}</div>`;
-    }
-  }catch(e){ $('dsMsg').textContent = '生成异常: '+e; }
-}
-async function runAiPipeline(){
-  const sid = $('pipeSourceSel').value;
-  if(!sid){ alert('请先选择源文件'); return; }
-  const rtype = $('pipeTypeSel').value;
-  $('pipeMsg').textContent = '⏳ AI 主链路运行中（解析→筛选→分析→呈现，可能需要 30~90 秒）…';
-  $('pipeReportBox').innerHTML = '';
-  $('pipeDetail').textContent = '';
-  try{
-    const res = await fetch('/api/ai-pipeline/run',{method:'POST',headers:{'Content-Type':'application/json'},
-      body:JSON.stringify({source_id:sid, report_type:rtype})});
-    const d = await res.json();
-    if(!res.ok){ $('pipeMsg').textContent = '运行失败: '+(d.detail||JSON.stringify(d)); return; }
-    const filt = d.filtered||{};
-    const kinds = {};
-    (filt.sections||[]).forEach(s=>{ kinds[s.kind]=(kinds[s.kind]||0)+1; });
-    const kindStr = Object.entries(kinds).map(([k,v])=>`${k}×${v}`).join('、') || '（无）';
-    $('pipeMsg').textContent = (d.fallback?`⚠️ 已回退数据集生成：${d.note||''}`:`✅ AI 主链路完成（markdown ${d.markdown_len||0} 字符）`);
-    $('pipeDetail').innerHTML =
-      `📥 筛选：${filt.sections?.length||0} 条（${kindStr}）<br>` +
-      `🧠 分析：${esc((d.analysis||'').slice(0,200))}${(d.analysis||'').length>200?'…':''}<br>` +
-      `📝 呈现：${(d.html||'').length} 字 HTML`;
-    $('pipeReportBox').innerHTML = d.html||'';
-  }catch(e){ $('pipeMsg').textContent = '运行异常: '+e; }
 }
 async function viewSource(sid){
   const d = await (await fetch('/api/sources/'+sid)).json();
@@ -1121,7 +1025,110 @@ function renderTableForCurrent(){
   else if(cur && cur.startsWith('group:')) renderGroupView(state.groups[cur.split(':')[1]]);
 }
 
-// ============ 周报 ============
+// ============ 模板 & 生成（一条线） ============
+let _tplPendingHtml = '';   // AI 解析出的待确认模板 HTML
+async function loadTemplate(){
+  // 载入当前生效模板预览（自定义或默认）
+  const box = $('templatePreview'); if(!box) return;
+  const msg = $('templateMsg');
+  try{
+    const d = await (await fetch('/api/template')).json();
+    const html = d.html || (d.format==='blocks' ? '' : '');
+    box.innerHTML = html ? html : '<div style="font-size:13px;color:var(--muted);">当前为默认模板（未上传自定义模板）</div>';
+    if(msg){ msg.className=''; msg.textContent=''; }
+  }catch(e){ box.innerHTML='<div style="font-size:13px;color:var(--muted);">加载模板失败</div>'; }
+  loadGenTpls();
+  loadGenSources();
+}
+async function parseTemplate(){
+  const inp=$('templateFile'); if(!inp.files.length){alert('请先选择模板文件');return;}
+  $('templateMsg').className=''; $('templateMsg').textContent='AI 正在解析模板…';
+  const fd=new FormData(); fd.append('file',inp.files[0]);
+  const res=await fetch('/api/template/parse',{method:'POST',body:fd});
+  const d=await res.json();
+  if(d.ok && d.html){
+    _tplPendingHtml = d.html;
+    $('templateMsg').className='msg ok';
+    $('templateMsg').textContent='已解析出模板，请确认或微调后命名入库：';
+    $('templatePreview').innerHTML = d.html;
+    $('tplConfirmBox').style.display='block';
+    $('tplName').value = '';
+  } else {
+    $('templateMsg').className='msg err';
+    $('templateMsg').textContent=(d.error||'解析失败')+(d.source_text?'（可在下方直接粘贴整理）':'');
+    _tplPendingHtml = d.source_text || '';
+    $('tplConfirmBox').style.display='block';
+    $('templatePreview').innerHTML = '<pre style="white-space:pre-wrap;font-size:12px;">'+esc(d.source_text||'')+'</pre>';
+  }
+}
+async function tplSaveLib(){
+  const name=$('tplName').value.trim();
+  if(!name){ alert('请填写模板名称'); return; }
+  const ttype=$('tplType').value, category=$('tplCategory').value.trim();
+  const res=await fetch('/api/template/lib',{method:'POST',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({name, html:_tplPendingHtml, ttype, category})});
+  const d=await res.json();
+  if(!res.ok){ $('tplConfirmMsg').className='msg err'; $('tplConfirmMsg').textContent=d.detail||'保存失败'; return; }
+  $('tplConfirmMsg').className='msg ok';
+  $('tplConfirmMsg').textContent='已命名入库';
+  setTimeout(()=>{ $('tplConfirmBox').style.display='none'; $('tplConfirmMsg').textContent=''; }, 1200);
+  loadGenTpls();
+}
+function tplRegenerate(){
+  // 再次对话微调：让 AI 基于当前解析结果重新生成（简单实现：提示用户修改后重新解析）
+  const newReq = prompt('输入您对模板的调整要求（将让 AI 基于原模板微调）：', '把标题改为更正式的写法，保持章节结构不变');
+  if(!newReq) return;
+  $('templateMsg').textContent='AI 正在微调模板…';
+  // 用 dataset/template-extract 无文件；直接走 parse（重新解析同原文不可行）→ 用 AI 对话微调：临时方案复用 template_parse 占位
+  alert('微调功能：请调整后重新上传模板文档（AI 将按新要求解析）；或点「直接编辑」手动改 HTML');
+}
+function tplEditHtml(){
+  const cur = _tplPendingHtml || '';
+  const edited = prompt('直接编辑模板 HTML（可粘贴修改后的内容）：', cur.slice(0,3000));
+  if(edited===null) return;
+  _tplPendingHtml = edited;
+  $('templatePreview').innerHTML = edited || '<div style="color:var(--muted);font-size:12px;">（空）</div>';
+  $('tplConfirmMsg').className='msg ok';
+  $('tplConfirmMsg').textContent='已更新，可命名入库';
+}
+function tplCancel(){
+  $('tplConfirmBox').style.display='none';
+  $('tplConfirmMsg').textContent='';
+  $('templateMsg').className=''; $('templateMsg').textContent='';
+}
+async function resetTemplate(){
+  if(!confirm('恢复默认模板？')) return;
+  await fetch('/api/template/reset',{method:'POST'});
+  loadTemplate();
+}
+async function loadGenTpls(){
+  const sel=$('genTplSel'); if(!sel) return;
+  const cur=sel.value;
+  try{
+    const d=await(await fetch('/api/template/lib?ttype='+genReportType)).json();
+    const items=d.items||[];
+    sel.innerHTML = '<option value="">模板：AI 自主编写</option>' +
+      items.map(t=>`<option value="${t.id}" ${String(t.id)===cur?'selected':''}>${esc(t.name)}（${esc((t.created_at||'').slice(0,10))}${t.category?' · '+esc(t.category):''}）</option>`).join('');
+    if(!cur && d.latest_id && items.length) sel.value=d.latest_id;
+  }catch(e){}
+}
+async function loadGenSources(){
+  const sel=$('genSourceSel'); if(!sel) return;
+  const cur=sel.value;
+  try{
+    const d=await(await fetch('/api/sources')).json();
+    const items=d.items||[];
+    sel.innerHTML='<option value="">选择数据源…</option>'+
+      items.map(s=>`<option value="${s.id}" ${s.id===cur?'selected':''}>${s.has_dataset?'[数据集] ':''}${esc(s.filename)}</option>`).join('');
+  }catch(e){}
+}
+function setReportType(t){
+  genReportType = t;
+  const w=$('rtWeek'), d=$('rtDay');
+  if(w){ w.className = t==='week' ? 'btn btn-primary' : 'btn btn-outline'; }
+  if(d){ d.className = t==='day' ? 'btn btn-primary' : 'btn btn-outline'; }
+  loadGenTpls();
+}
 function currentHealth(){
   const cur=state.current;
   if(cur && cur.startsWith('sheet:')){
@@ -1136,49 +1143,27 @@ function currentHealth(){
 }
 async function generateReport(){
   const t0 = Date.now();
-  // 数据体检前置：有缺项先提示，避免基于残缺数据生成
-  const h = currentHealth();
-  if(h){
-    const missing = (h.missing_progress||[]).length + (h.missing_owner||[]).length
-                  + (h.missing_plan_end||[]).length + (h.missing_plan_start||[]).length;
-    if(missing > 0 && !confirm(`当前数据有 ${missing} 处缺项（进度/负责人/日期）。建议先点「✏ 编辑任务」补齐再生成，仍要继续吗？`)){
-      return;
-    }
-  }
-  $('genMsg').className=''; $('genMsg').textContent='生成中...';
-  let fd=new FormData();
-  fd.append('project_name',$('genProject').value);
-  fd.append('period',$('genPeriod').value);
-  fd.append('report_type', genReportType);
-  fd.append('use_ai',$('genUseAI').checked);
-  // 当前选中的 sheet 或分组
-  const cur=state.current;
-  if(cur && cur.startsWith('sheet:')) fd.append('sheet_ids',cur.split(':')[1]);
-  else if(cur && cur.startsWith('group:')){
-    const gid=cur.split(':')[1];
-    const g=state.groups[gid];
-    if(g&&g.sheets) fd.append('sheet_ids',g.sheets.join(','));
-  }
+  const sid = $('genSourceSel') ? $('genSourceSel').value : '';
+  if(!sid){ alert('请先选择数据源（已上传的文件）'); return; }
+  const tplId = $('genTplSel') ? $('genTplSel').value : '';
+  $('genMsg').className=''; $('genMsg').textContent='生成中（复用已分析的数据，AI 按模板表达）...';
   try{
-    const res=await fetch('/api/generate',{method:'POST',body:fd});
+    const res=await fetch('/api/generate/one',{method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({
+        source_id: sid,
+        template_id: tplId ? Number(tplId) : null,
+        report_type: genReportType,
+        project_name: $('genProject').value,
+        period: $('genPeriod').value,
+        use_ai: $('genUseAI').checked,
+      })});
     const d=await res.json();
-    if(!res.ok) throw new Error(JSON.stringify(d));
-    const g1=d.generated[0];
-    state.lastReport=g1;
-    $('reportBox').innerHTML=g1.report;
+    if(!res.ok) throw new Error(d.detail||JSON.stringify(d));
+    state.lastReport = {report:d.html, project:$('genProject').value||'周报'};
+    $('reportBox').innerHTML=d.html;
     $('exportRow').style.display='flex';
-    let msg = g1.ai_error ? ('AI未生效（'+g1.ai_error+'）已用规则文案')
-             : (g1.ai_used ? ('已用 AI 生成（汇总'+g1.n_sheets+'个sheet）')
-                           : ('已用规则引擎生成（汇总'+g1.n_sheets+'个sheet）'));
-    if(g1.numbers_corrected) msg += `；AI 文本已自动校正 ${g1.numbers_corrected} 处数字`;
-    msg += g1.has_prev ? '；已与上周对比' : '；首次生成（存入历史后下周可自动环比）';
-    if(g1.tokens && (g1.tokens.in + g1.tokens.out + g1.tokens.cache_hits) > 0){
-      msg += `；本次 AI 消耗 ${g1.tokens.in} in / ${g1.tokens.out} out tok${g1.tokens.cache_hits?'（缓存命中 '+g1.tokens.cache_hits+'）':''}`;
-    }
-    if(g1.ignored) msg += `；已按规则忽略干扰 ${g1.ignored} 条`;
-    msg += `（耗时 ${((Date.now()-t0)/1000).toFixed(1)}s）`;
-    $('genMsg').className=g1.ai_error?'msg err':'msg ok';
-    $('genMsg').textContent=msg;
+    $('genMsg').className='msg ok';
+    $('genMsg').textContent = d.note + `（耗时 ${((Date.now()-t0)/1000).toFixed(1)}s）`;
   }catch(e){ $('genMsg').className='msg err'; $('genMsg').textContent='生成失败:'+e.message; }
 }
 async function exportReport(format){
@@ -1198,12 +1183,6 @@ async function saveToHistory(){
     body:JSON.stringify({filename:name,content:state.lastReport.report,stats:state.lastReport.stats||null,
       report_type:genReportType, period:$('genPeriod').value})});
   alert('已存入文稿库（可在「📚 数据库中心 → 文稿库」查看）');
-}
-function setReportType(t){
-  genReportType = t;
-  $('rtWeek').className = t==='week' ? 'btn btn-primary' : 'btn btn-outline';
-  $('rtDay').className = t==='day' ? 'btn btn-primary' : 'btn btn-outline';
-  $('genPeriod').placeholder = t==='day' ? '日期，如 2026-08-25' : '周期，如 2026-W33';
 }
 async function loadTrend(){
   const cv=$('trendCanvas'); if(!cv) return;
@@ -1237,67 +1216,6 @@ async function loadTrend(){
     ctx.fillStyle='#2E7D32'; ctx.fillText('— 平均实际', padL+78, padT-4);
     ctx.fillStyle='#C0504D'; ctx.fillText('— 风险(×20%)', padL+168, padT-4);
   }catch(e){ $('trendMsg').textContent='趋势加载失败'; }
-}
-
-// ============ AI 提示词管理（可编辑调试 + 示例 few-shot） ============
-let promptState = {};
-async function loadPrompts(){
-  const d = await (await fetch('/api/settings/prompts')).json();
-  promptState = {};
-  $('promptList').innerHTML = (d.items||[]).map(it=>{
-    promptState[it.key] = {
-      system:it.system, user:it.user, examples:(it.examples||[]).join('\n---\n'),
-      defSystem:it.default_system, defUser:it.default_user, defExamples:(it.default_examples||[]).join('\n---\n')
-    };
-    const ph = Object.keys(it.docs||{}).join(' ');
-    return `<div style="border:1px solid var(--border);border-radius:8px;padding:10px;margin-bottom:10px;">
-      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;">
-        <b style="font-size:13px;">${esc(it.label)}${it.modified?' <span class="pill" style="background:#E65100;font-size:10px">已修改</span>':''}</b>
-        <button class="btn btn-outline btn-sm" style="font-size:11px;padding:2px 8px" onclick="resetPrompt('${it.key}')">恢复该项默认</button>
-      </div>
-      <div style="display:flex;gap:8px;flex-wrap:wrap;">
-        <div style="flex:1;min-width:240px;">
-          <div style="font-size:11px;color:var(--muted);margin-bottom:2px;">System（角色与纪律）</div>
-          <textarea rows="2" style="width:100%;font-size:12px" onchange="promptState['${it.key}'].system=this.value">${esc(it.system)}</textarea>
-        </div>
-        <div style="flex:2;min-width:300px;">
-          <div style="font-size:11px;color:var(--muted);margin-bottom:2px;">User（任务与格式）｜占位符：${esc(ph)}</div>
-          <textarea rows="5" style="width:100%;font-size:12px" onchange="promptState['${it.key}'].user=this.value">${esc(it.user)}</textarea>
-        </div>
-      </div>
-      <div style="margin-top:6px;">
-        <div style="font-size:11px;color:var(--muted);margin-bottom:2px;">示例（few-shot，AI 将模仿其风格与结构；多个示例用 --- 分隔）</div>
-        <textarea rows="2" style="width:100%;font-size:12px" onchange="promptState['${it.key}'].examples=this.value">${esc(promptState[it.key].examples)}</textarea>
-      </div>
-    </div>`;
-  }).join('') || '<div style="font-size:12px;color:var(--muted)">暂无提示词配置</div>';
-}
-function splitExamples(txt){ return String(txt||'').split(/\n---\n/).map(s=>s.trim()).filter(Boolean); }
-async function saveAllPrompts(){
-  const overrides = {};
-  for(const k in promptState){
-    const p = promptState[k];
-    const ex = splitExamples(p.examples), dex = splitExamples(p.defExamples);
-    const changed = p.system!==p.defSystem || p.user!==p.defUser || JSON.stringify(ex)!==JSON.stringify(dex);
-    if(changed) overrides[k] = {system:p.system, user:p.user, examples:ex};
-  }
-  if(!Object.keys(overrides).length){ $('promptMsg').textContent='没有需要保存的修改'; return; }
-  $('promptMsg').textContent='保存中...';
-  const res = await fetch('/api/settings/prompts',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({overrides})});
-  const d = await res.json();
-  $('promptMsg').textContent = res.ok ? (d.note||'已保存') : (d.detail||'保存失败');
-  loadPrompts();
-}
-async function resetPrompt(key){
-  if(!confirm('恢复该项默认提示词？')) return;
-  const res = await fetch('/api/settings/prompts',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({overrides:{[key]:{}}})});
-  await res.json(); loadPrompts();
-}
-async function resetAllPrompts(){
-  if(!confirm('恢复全部默认提示词？')) return;
-  await fetch('/api/settings/prompts/reset',{method:'POST'});
-  $('promptMsg').textContent='已恢复默认';
-  loadPrompts();
 }
 
 // ============ 看板（按 skill 设计语言：KPI卡带涨跌/迷你趋势、升即坏反色、分组独立成区） ============
@@ -1420,7 +1338,7 @@ document.querySelectorAll('.tab').forEach(t=>t.addEventListener('click',()=>{
   t.classList.add('active'); $('panel-'+t.dataset.tab).classList.add('active');
   if(t.dataset.tab==='dashboard') loadDashboard();
   if(t.dataset.tab==='template') loadTemplate();
-  if(t.dataset.tab==='settings'){ loadPrompts(); }
+  if(t.dataset.tab==='settings'){ /* 配置均移至库页 */ }
 }));
 if(localStorage.getItem('pm_dark')==='1'){ document.body.classList.add('dark'); $('darkBtn').textContent='☀️'; }
 if(!localStorage.getItem('pm_onboard')){ $('onboard').style.display='block'; }
@@ -1428,7 +1346,7 @@ if(!localStorage.getItem('pm_onboard')){ $('onboard').style.display='block'; }
 document.addEventListener('click', e=>{
   if(!e.target.closest('#moveMenu') && !e.target.closest('.tree-item .ghost')) $('moveMenu').style.display='none';
 });
-loadWorkspace(); loadTemplate(); loadPrompts(); loadDashboard();
+loadWorkspace(); loadTemplate(); loadDashboard();
 </script>
 </body>
 </html>

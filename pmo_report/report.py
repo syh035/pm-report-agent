@@ -317,8 +317,12 @@ class ReportGenerator:
         }
         # 提示词走可编辑面板（pmo_report/prompts.py + config/prompts.json）
         from . import prompts as prompts_mod
+        from .rules import load_rules as _load_rules
+        gen_reqs = _load_rules().get("generation_requirements") or []
+        gen_reqs_text = "\n".join(f"- {r.get('title')}: {r.get('description')}" for r in gen_reqs) or "（无）"
         entry = prompts_mod.get_prompt("report_overview")
-        prompt = prompts_mod.render_user(entry, {"stats_json": json.dumps(data, ensure_ascii=False)})
+        prompt = prompts_mod.render_user(entry, {"stats_json": json.dumps(data, ensure_ascii=False),
+                                                 "generation_requirements": gen_reqs_text})
         try:
             text = ai_module.call_with_cache(
                 "report",
