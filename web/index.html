@@ -126,6 +126,12 @@
 <div class="layout">
   <!-- 左侧边栏 -->
   <div class="sidebar">
+    <div class="side-title">📁 源数据分组
+      <span style="float:right;font-weight:400;text-transform:none;letter-spacing:0;">
+        <button class="side-btn" style="display:inline-block;width:auto;margin:0;padding:1px 8px;border:1px solid var(--border);border-radius:6px;" onclick="newSourceGroup()">＋ 新建</button>
+      </span>
+    </div>
+    <div id="sourceGroups" style="font-size:12px;color:var(--muted);padding:2px 8px;margin-bottom:8px;">（加载中…）</div>
     <div class="side-title">📦 源数据 <span id="srcBadge" style="opacity:.6"></span>
       <span style="float:right;font-weight:400;text-transform:none;letter-spacing:0;">
         <input type="date" id="srcDate" style="font-size:11px;padding:1px 4px;border:1px solid var(--border);border-radius:6px;" onchange="srcDateChanged()" title="按日期筛选源数据">
@@ -136,7 +142,7 @@
       <button class="f" id="srcModeAll" style="background:#EEF2FF;color:var(--primary);border:none;border-radius:6px;padding:2px 8px;cursor:pointer;" onclick="setSrcMode('all')">全部</button>
     </div>
     <div id="sourceList" style="font-size:12px;color:var(--muted);padding:2px 8px;">（加载中…）</div>
-    <div style="font-size:11px;color:var(--muted);padding:6px 8px;line-height:1.6;">💡 上传资料用右上角按钮；点击源文件 → 右侧查看其 AI 提取条目（任务/指标/风险/里程碑/决策，字段自适应）。</div>
+    <div style="font-size:11px;color:var(--muted);padding:6px 8px;line-height:1.6;">💡 上传资料用右上角按钮；点击源文件 → 右侧查看其 AI 提取条目。一个周报涉及多个数据集时，把它们移入同一分组，生成时选分组即可引用整组数据。</div>
   </div>
 
   <!-- 主区域 -->
@@ -225,10 +231,13 @@
             <button class="btn btn-primary" id="rtWeek" onclick="setReportType('week')">周报</button>
             <button class="btn btn-outline" id="rtDay" onclick="setReportType('day')">日报</button>
           </div>
+          <select id="genGroupSel" style="min-width:150px" title="数据源分组（一个周报引用整组数据；选分组优先，可不再单选数据源）">
+            <option value="">数据分组（可选）</option>
+          </select>
           <select id="genSourceSel" style="min-width:220px" title="数据源（上传时已分析，生成复用分析结果）">
             <option value="">选择数据源…</option>
           </select>
-          <select id="genTplSel" style="min-width:220px" title="模板（默认最新，可切库中其他版本）">
+          <select id="genTplSel" style="min-width:220px" title="模板（默认最新，可切库中其他版本；按模板原文原地更新数据）">
             <option value="">模板：AI 自主编写</option>
           </select>
           <input type="text" id="genProject" placeholder="项目名称（可选）" style="width:160px">
@@ -351,8 +360,9 @@ async function loadWorkspace(){
   // 主体归 AI：工作区=源文件列表（无 sheet/分组概念），仅刷新源数据区
   loadSourceList();
 }
-// —— 📦 源数据（原始文件保留 + 行级对照） ——
-let srcMode = 'cur';   // cur=当前选中sheet的源 | all=全部 | date=按日期
+// —— 📦 源数据（原始文件保留 + 行级对照 + 分组） ——
+let srcMode = 'all';   // cur=当前选中sheet的源 | all=全部 | date=按日期
+let srcGroups = [];    // 分组：[{name, count, sources:[...]}]
 async function loadSourceList(){
   try{
     const d = await (await fetch('/api/sources')).json();
@@ -360,7 +370,50 @@ async function loadSourceList(){
     $('srcBadge').textContent = `(${items.length})`;
     loadGenSources();
     renderSourceList(items);
+    loadSourceGroups();
   }catch(e){ $('sourceList').textContent='源数据加载失败'; }
+}
+async function loadSourceGroups(){
+  try{
+    const d = await (await fetch('/api/source-groups')).json();
+    srcGroups = d.groups||[];
+    const box = $('sourceGroups');
+    box.innerHTML = srcGroups.length ? srcGroups.map(g=>`
+      <div style="display:flex;align-items:center;gap:4px;padding:3px 2px;font-size:12px;cursor:pointer;border-radius:4px;"
+        onmouseover="this.style.background='#EEF2FF'" onmouseout="this.style.background=''" onclick="selectGroupSrc('${esc(g.name)}')">
+        <span>📁 ${esc(g.name)}</span>
+        <span style="margin-left:auto;font-size:10px;color:var(--muted)">${g.count}个</span>
+        <span style="font-size:10px;color:var(--muted);cursor:pointer;" title="删除分组（源文件不删除）" onclick="event.stopPropagation();delSourceGroup('${esc(g.name)}')">🗑</span>
+      </div>`).join('') : '<div style="font-size:11px;color:var(--muted)">（暂无分组，周报引用多个数据集时建一个）</div>';
+  }catch(e){}
+}
+function newSourceGroup(){
+  const n = prompt('分组名称：','新分组');
+  if(!n) return;
+  // 空分组直接创建（把当前选中源移入或留空）
+  srcGroups = srcGroups||[];
+  if(srcGroups.some(g=>g.name===n)){ alert('分组已存在'); return; }
+  srcGroups.push({name:n, count:0, sources:[]});
+  loadSourceGroups();
+}
+async function selectGroupSrc(name){
+  const g = srcGroups.find(x=>x.name===name);
+  if(!g || !g.sources || !g.sources.length){ alert('该分组暂无源文件（在「源数据」列表点源文件右侧的 📁 移入）'); return; }
+  // 组内源文件按时间序列出 → 点击查看
+  $('sourceList').innerHTML = g.sources.map(s=>
+    `<div style="display:flex;align-items:center;gap:4px;padding:3px 2px;font-size:12px;cursor:pointer;border-radius:4px;" onmouseover="this.style.background='#EEF2FF'" onmouseout="this.style.background=''" onclick="selectSource('${s.id}')">
+      <span>${s.filename.length>20?s.filename.slice(0,20)+'…':s.filename}</span>
+      <span style="margin-left:auto;font-size:10px;color:var(--muted)">${esc((s.uploaded_at||'').slice(5,16))}</span>
+    </div>`).join('') || '<div style="font-size:12px;color:var(--muted)">（空分组）</div>';
+}
+async function moveSrcToGroup(sid, name){
+  await fetch('/api/sources/'+sid+'/group',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({group_name:name||''})});
+  loadSourceList();
+}
+async function delSourceGroup(name){
+  if(!confirm(`删除分组「${name}」？（组内源文件会移出，文件本身不删除）`)) return;
+  await fetch('/api/source-groups/delete',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({group_name:name})});
+  loadSourceList();
 }
 function setSrcMode(m){
   srcMode = m;
@@ -397,8 +450,16 @@ function renderSourceList(items){
     `<div style="display:flex;align-items:center;gap:4px;padding:3px 2px;font-size:12px;cursor:pointer;border-radius:4px;" onmouseover="this.style.background='#EEF2FF'" onmouseout="this.style.background=''" onclick="selectSource('${s.id}')">
       <span title="${esc(s.filename)}">${s.has_dataset?'🗂':'📄'} ${esc(s.filename.length>14?s.filename.slice(0,14)+'…':s.filename)}</span>
       <span style="margin-left:auto;font-size:10px;color:var(--muted)">${esc((s.uploaded_at||'').slice(5,16))}</span>
+      <span style="font-size:10px;color:var(--muted);cursor:pointer;" title="移入分组（周报引用整组数据）" onclick="event.stopPropagation();srcGroupMenu('${s.id}',event)">📁</span>
       <span style="font-size:10px;color:var(--muted);cursor:pointer;" title="详情（原文/下载）" onclick="event.stopPropagation();viewSource('${s.id}')">⋯</span>
     </div>`).join('') : '<div style="font-size:12px;color:var(--muted)">（无匹配源文件，可切「全部」或选日期）</div>';
+}
+function srcGroupMenu(sid, ev){
+  ev.stopPropagation();
+  const groups = (srcGroups||[]).map(g=>g.name);
+  const cur = prompt('移入分组（选一个已有分组名，或输入新分组名；留空 = 移出分组）：\n\n已有分组：'+(groups.join('、')||'（无）'), groups[0]||'');
+  if(cur===null) return;
+  moveSrcToGroup(sid, cur.trim());
 }
 async function viewSource(sid){
   const d = await (await fetch('/api/sources/'+sid)).json();
@@ -486,10 +547,13 @@ function renderSheetView(sh){
     $('viewTable').innerHTML='<div class="empty">该数据无 AI 提取结果（上传后自动分析）</div>';
   }
 }
-// AI 提取条目通用渲染：按 kind/板块分组，字段自适应（任务表→进度/状态；指标→数值；说明类→文本）
+// AI 提取条目通用渲染：按 kind 分组 → 每板块一张 Excel 式表格（标题行 = 字段并集），长文本整段展示
+// 与「点击数据集」的解析表格风格一致，而不是看板卡片
 function renderAiItems(items, box, title){
   if(!box) return;
   const kindLabel = {task:'任务', risk:'风险', issue:'依赖/问题', decision:'决策', milestone:'里程碑', metric:'指标', raw:'原始'};
+  const kindColor = {task:'#2563EB', risk:'#A33A37', issue:'#0E7490', decision:'#D97706',
+                     milestone:'#8B5CF6', metric:'#4A7A1E', raw:'#6B7280'};
   if(!items || !items.length){
     box.innerHTML = '<div class="empty" style="padding:20px;color:var(--muted);font-size:13px;">暂无 AI 提取条目 —— 请配置 API Key 后重新上传（上传即自动分析）</div>';
     return;
@@ -497,53 +561,68 @@ function renderAiItems(items, box, title){
   const byKind = {};
   items.forEach(it=>{ (byKind[it.kind]=byKind[it.kind]||[]).push(it); });
   box.innerHTML = Object.entries(byKind).map(([kind, list])=>{
+    const color = kindColor[kind]||'#6B7280';
     const secGroups = {};
     list.forEach(it=>{
       const sec = (it.payload||{}).section || '未分板块';
       (secGroups[sec]=secGroups[sec]||[]).push(it);
     });
-    const secHtml = Object.entries(secGroups).map(([sec, arr])=>`
-      <div style="margin:8px 0 0;">
-        <div style="font-size:12px;font-weight:600;color:var(--muted);margin-bottom:4px;">${esc(sec)}</div>
-        ${arr.map(it=>renderAiItemCard(it)).join('')}
-      </div>`).join('');
-    return `<div class="card" style="margin-bottom:12px;">
-      <h2 style="margin-bottom:6px;">${esc(kindLabel[kind]||kind)}（${list.length}）</h2>${secHtml}</div>`;
-  }).join('');
-}
-function renderAiItemCard(it){
-  const p = it.payload||{};
-  const fields = p.fields || {};
-  const fieldEntries = Object.entries(fields).length ? Object.entries(fields)
-    : Object.entries(p).filter(([k])=>!['section','source_note','fields'].includes(k));
-  const name = esc(it.name||'');
-  const hasProgress = fieldEntries.some(([k])=>k.includes('进度')||k.includes('完成度')||k==='progress');
-  const hasStatus = fieldEntries.some(([k])=>k.includes('状态')||k==='status');
-  const longText = fieldEntries.some(([,v])=>String(v).length>60);
-  if(hasProgress || hasStatus){
-    const prog = fieldEntries.find(([k])=>k.includes('进度')||k.includes('完成度')||k==='progress');
-    const st = fieldEntries.find(([k])=>k.includes('状态')||k==='status');
-    const rest = fieldEntries.filter(([k])=>k!==(prog&&prog[0]) && k!==(st&&st[0])).slice(0,3)
-      .map(([k,v])=>`${esc(k)}: ${esc(String(v).slice(0,30))}`).join(' · ');
-    return `<div style="display:flex;gap:10px;align-items:center;border:1px solid var(--border);border-radius:8px;padding:7px 10px;margin-bottom:6px;background:#fff;">
-      <b style="min-width:150px;">${name}</b>
-      ${prog?`<span style="font-size:12px;">进度 <b>${esc(prog[1])}</b></span>`:''}
-      ${st?`<span class="pill" style="background:#EEF2FF;color:var(--primary);font-size:10px;">${esc(st[1])}</span>`:''}
-      <span style="margin-left:auto;font-size:11px;color:var(--muted);text-align:right;">${rest}</span>
+    const secHtml = Object.entries(secGroups).map(([sec, arr])=>{
+      // 标题行 = 该板块所有条目的字段并集（保持出现顺序），第一列固定「名称」
+      const keys = [];
+      arr.forEach(it=>{
+        const p = it.payload||{};
+        const fields = p.fields && Object.keys(p.fields).length ? p.fields
+          : Object.fromEntries(Object.entries(p).filter(([k])=>!['section','source_note','fields'].includes(k)));
+        Object.keys(fields).forEach(k=>{ if(!keys.includes(k)) keys.push(k); });
+      });
+      // 长文本字段（>60 字）不放进单元格，改整段展示
+      const longKeys = keys.filter(k=>arr.some(it=>String(((it.payload||{}).fields||{})[k] ?? '').length>60));
+      const shortKeys = keys.filter(k=>!longKeys.includes(k));
+      const th = `<th style="border:1px solid var(--border);padding:5px 8px;font-size:11px;text-align:left;background:${color};color:#fff;">名称</th>`
+        + shortKeys.map(k=>`<th style="border:1px solid var(--border);padding:5px 8px;font-size:11px;text-align:left;background:${color};color:#fff;">${esc(k)}</th>`).join('');
+      const rows = arr.map(it=>{
+        const p = it.payload||{};
+        const fields = p.fields && Object.keys(p.fields).length ? p.fields
+          : Object.fromEntries(Object.entries(p).filter(([k])=>!['section','source_note','fields'].includes(k)));
+        const tds = shortKeys.map(k=>{
+          const v = fields[k];
+          const s = String(v ?? '');
+          return `<td style="border:1px solid var(--border);padding:5px 8px;font-size:12px;">${s?esc(s.slice(0,40))+(s.length>40?'…':''):'<span style="color:var(--muted)">—</span>'}</td>`;
+        }).join('');
+        const longTxt = longKeys.map(k=>{
+          const v = fields[k];
+          return v?`<div style="margin:2px 0;"><b style="color:var(--muted);font-size:11px;">${esc(k)}：</b><span>${esc(String(v))}</span></div>`:'';
+        }).join('');
+        return `<tr>
+          <td style="border:1px solid var(--border);padding:5px 8px;font-size:12px;"><b>${esc(it.name)}</b>${longTxt}</td>
+          ${tds}
+        </tr>`;
+      }).join('');
+      return `<div style="margin:10px 0 0;">
+        <div style="font-size:12px;font-weight:600;color:var(--muted);margin:6px 0 4px;">${esc(sec)}（${arr.length}）</div>
+        <div style="overflow-x:auto;">
+          <table style="width:100%;border-collapse:collapse;margin-top:2px;background:#fff;">
+            <tr>${th}</tr>${rows}
+          </table>
+        </div>
+      </div>`;
+    }).join('');
+    return `<div style="margin-bottom:14px;border:1px solid var(--border);border-radius:10px;padding:12px 14px;background:var(--card);">
+      <div style="display:flex;align-items:center;gap:8px;margin-bottom:4px;">
+        <span style="width:10px;height:10px;border-radius:3px;background:${color};display:inline-block;"></span>
+        <b style="font-size:14px;">${esc(kindLabel[kind]||kind)}</b>
+        <span style="margin-left:auto;font-size:11px;color:var(--muted);background:var(--bg);border:1px solid var(--border);border-radius:12px;padding:1px 8px;">${list.length} 条</span>
+      </div>
+      ${secHtml||'<div style="font-size:12px;color:var(--muted);margin:6px 0;">（无板块）</div>'}
     </div>`;
-  }
-  if(longText){
-    const text = fieldEntries.map(([k,v])=>`${k}: ${v}`).join('；') || it.name;
-    return `<div style="border:1px solid var(--border);border-radius:8px;padding:8px 12px;margin-bottom:6px;background:#fff;font-size:13px;line-height:1.7;">${esc(name)}${text!==it.name?`<div style="color:var(--muted);font-size:12px;margin-top:3px;">${esc(text)}</div>`:''}</div>`;
-  }
-  const kvs = fieldEntries.slice(0,6).map(([k,v])=>`<span style="display:inline-block;border:1px solid var(--border);border-radius:6px;padding:2px 8px;margin:2px;font-size:11px;background:#FAFBFC;"><b>${esc(k)}</b> ${esc(String(v).slice(0,40))}</span>`).join('');
-  return `<div style="display:flex;gap:8px;align-items:flex-start;border:1px solid var(--border);border-radius:8px;padding:7px 10px;margin-bottom:6px;background:#fff;flex-wrap:wrap;">
-    <b style="font-size:13px;">${name}</b>${kvs}</div>`;
+  }).join('');
 }
 
 
 // ============ 模板 & 生成（一条线） ============
 let _tplPendingHtml = '';   // AI 解析出的待确认模板 HTML
+let _tplPendingSrc = '';    // 模板原文（供「原地更新」生成：保留风格/用词/格式）
 async function loadTemplate(){
   // 载入当前生效模板预览（自定义或默认）
   const box = $('templatePreview'); if(!box) return;
@@ -565,6 +644,7 @@ async function parseTemplate(){
   const d=await res.json();
   if(d.ok && d.html){
     _tplPendingHtml = d.html;
+    _tplPendingSrc = d.source_text || '';
     $('templateMsg').className='msg ok';
     $('templateMsg').textContent='已解析出模板，请确认或微调后命名入库：';
     $('templatePreview').innerHTML = d.html;
@@ -574,6 +654,7 @@ async function parseTemplate(){
     $('templateMsg').className='msg err';
     $('templateMsg').textContent=(d.error||'解析失败')+(d.source_text?'（可在下方直接粘贴整理）':'');
     _tplPendingHtml = d.source_text || '';
+    _tplPendingSrc = d.source_text || '';
     $('tplConfirmBox').style.display='block';
     $('templatePreview').innerHTML = '<pre style="white-space:pre-wrap;font-size:12px;">'+esc(d.source_text||'')+'</pre>';
   }
@@ -586,7 +667,7 @@ async function tplSaveLib(){
   if(!name){ alert('请填写模板名称'); return; }
   const ttype=$('tplType').value, category=$('tplCategory').value.trim();
   const res=await fetch('/api/template/lib',{method:'POST',headers:{'Content-Type':'application/json'},
-    body:JSON.stringify({name, html:_tplPendingHtml, ttype, category})});
+    body:JSON.stringify({name, html:_tplPendingHtml, source_text:_tplPendingSrc, ttype, category})});
   const d=await res.json();
   if(!res.ok){ $('tplConfirmMsg').className='msg err'; $('tplConfirmMsg').textContent=d.detail||'保存失败'; return; }
   $('tplConfirmMsg').className='msg ok';
@@ -676,6 +757,14 @@ async function loadGenSources(){
     sel.innerHTML='<option value="">选择数据源…</option>'+
       items.map(s=>`<option value="${s.id}" ${s.id===cur?'selected':''}>${s.has_dataset?'[数据集] ':''}${esc(s.filename)}</option>`).join('');
   }catch(e){}
+  // 分组选择器（周报引用整组数据）
+  const gsel=$('genGroupSel'); if(!gsel) return;
+  try{
+    const g=await(await fetch('/api/source-groups')).json();
+    const groups=(g.groups||[]).filter(x=>x.count>0);
+    gsel.innerHTML='<option value="">数据分组（可选）</option>'+
+      groups.map(x=>`<option value="${esc(x.name)}">📁 ${esc(x.name)}（${x.count}个）</option>`).join('');
+  }catch(e){}
 }
 function setReportType(t){
   genReportType = t;
@@ -687,13 +776,21 @@ function setReportType(t){
 async function generateReport(){
   const t0 = Date.now();
   const sid = $('genSourceSel') ? $('genSourceSel').value : '';
-  if(!sid){ alert('请先选择数据源（已上传的文件）'); return; }
+  const gname = $('genGroupSel') ? $('genGroupSel').value : '';
+  // 分组优先：引用组内全部源文件（一个周报多次数据集）
+  let source_ids = [];
+  if(gname){
+    const g = srcGroups.find(x=>x.name===gname);
+    source_ids = (g && g.sources ? g.sources.map(s=>s.id) : []);
+  }
+  if(!gname && !sid){ alert('请选择数据源（或数据分组）'); return; }
   const tplId = $('genTplSel') ? $('genTplSel').value : '';
-  $('genMsg').className=''; $('genMsg').textContent='生成中（复用已分析的数据，AI 按模板表达）...';
+  $('genMsg').className=''; $('genMsg').textContent='生成中（按模板原文更新数据，AI 保持模板风格用词）...';
   try{
     const res=await fetch('/api/generate/one',{method:'POST',headers:{'Content-Type':'application/json'},
       body:JSON.stringify({
         source_id: sid,
+        source_ids: source_ids,
         template_id: tplId ? Number(tplId) : null,
         report_type: genReportType,
         project_name: $('genProject').value,

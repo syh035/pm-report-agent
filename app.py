@@ -531,6 +531,38 @@ def list_sources():
     return {"items": items, "summary": datastore.items_summary()}
 
 
+@app.get("/api/source-groups")
+def list_source_groups():
+    """源文件分组列表（周报生成可引用整组数据）。"""
+    from pmo_report import datastore
+    groups = datastore.source_groups()
+    for g in groups:
+        g["sources"] = datastore.sources_by_group(g["name"])
+    return {"groups": groups}
+
+
+class SourceGroupIn(BaseModel):
+    group_name: str = ""
+
+
+@app.post("/api/sources/{sid}/group")
+def set_source_group_api(sid: str, payload: SourceGroupIn):
+    """把源文件移入/移出分组（group_name 为空 = 移出）。"""
+    from pmo_report import datastore
+    if not datastore.get_source(sid):
+        raise HTTPException(404, "源数据不存在")
+    datastore.set_source_group(sid, (payload.group_name or "").strip())
+    return {"ok": True, "note": f"已移入分组「{payload.group_name}」" if payload.group_name else "已移出分组"}
+
+
+@app.post("/api/source-groups/delete")
+def delete_source_group_api(payload: SourceGroupIn):
+    """删除分组（组内源文件移出分组，不删除文件）。"""
+    from pmo_report import datastore
+    n = datastore.delete_source_group((payload.group_name or "").strip())
+    return {"ok": True, "note": f"已删除分组（{n} 个源文件移出）"}
+
+
 @app.get("/api/sources/ops")
 def list_source_ops_api(limit: int = 100):
     """原始库操作留痕（删除/恢复记录，供查看修改历史）。"""
@@ -1841,6 +1873,7 @@ def template_history():
 class TemplateLibIn(BaseModel):
     name: str = ""
     html: str = ""
+    source_text: str = ""
     ttype: str = "week"      # week/day/other
     category: str = ""
 
@@ -1864,7 +1897,8 @@ def template_lib_save(payload: TemplateLibIn):
         raise HTTPException(400, "模板内容为空")
     tid = datastore.save_template_lib(
         name=(payload.name or "").strip() or f"模板{datetime.now().strftime('%m%d%H%M')}",
-        html=payload.html, ttype=payload.ttype or "week", category=payload.category or "")
+        html=payload.html, ttype=payload.ttype or "week", category=payload.category or "",
+        source_text=payload.source_text or "")
     return {"ok": True, "id": tid, "note": "已命名入库"}
 
 
@@ -1944,7 +1978,7 @@ async def template_parse(file: UploadFile = File(...)):
         # 解析成功后直接保存为当前 HTML 模板（模块化模板已移除，模板库走 HTML）
         ReportGenerator.save_custom_template(html_template)
         _append_template_history(fmt="html", html=html_template)
-        return {"ok": True, "html": html_template, "source_text": text[:2000], "saved": True}
+        return {"ok": True, "html": html_template, "source_text": text[:20000], "saved": True}
     except Exception as e:
         return {"ok": False, "html": "", "source_text": text[:5000],
                 "error": f"AI 解析失败（{e}）。以下是抽取的原始文本，可手动整理。"}
@@ -2091,8 +2125,9 @@ async def generate(
 
 
 class GenerateOneIn(BaseModel):
-    """一条线生成：选数据源 + 模板（可选）→ 后端按数据形态自动选管线。"""
+    """一条线生成：选数据源/分组 + 模板（可选）→ 后端按数据形态自动选管线。"""
     source_id: str = ""
+    source_ids: List[str] = []     # 分组生成：一次引用多个源文件（一个周报多次数据集）
     template_id: Optional[int] = None
     template_text: str = ""        # 未选库中模板时，可直传模板文本
     report_type: str = "week"
@@ -2105,62 +2140,58 @@ class GenerateOneIn(BaseModel):
 def generate_one(payload: GenerateOneIn):
     """一条线生成入口（取代三种方式分开调）。
 
-    按数据形态自动选管线：
-      - 该源文件有 dataset_sections（多 sheet 数据集）→ 模板+数据集生成
-      - 该源文件关联的 sheet 有 tasks → 规则引擎统计 + AI 增强
-      - 都没有 → AI 主链路（从原文 markdown 分析再生成）
-    模板：优先用 template_id 指定的库模板；否则 template_text；都没有则 AI 自主编写。
+    数据源：source_id（单选）或 source_ids（分组，一个周报引用多个数据集）。
+    模板：优先 template_id 指定的库模板（用其原文 source_text 做「原地更新」），
+          否则 template_text；都没有则 AI 自主编写骨架。
+    生成语义：把模板原文原地更新为本周周报——找到模板中与数据对应的位置，
+              用数据真实值替换，其余文字/风格/格式原样保留。
     """
     from pmo_report import datastore
     from pmo_report.dataset import sections_to_markdown
     from pmo_report import prompts as prompts_mod
-    from pmo_report.ai_pipeline import doc_to_markdown
 
-    src = datastore.get_source(payload.source_id) if payload.source_id else None
-    if not src:
+    # 1) 确定源文件集合（单选或分组）
+    ids = [s for s in (payload.source_ids or []) if s]
+    if payload.source_id and payload.source_id not in ids:
+        ids.insert(0, payload.source_id)
+    ids = list(dict.fromkeys(ids))   # 去重保序
+    if not ids:
+        raise HTTPException(400, "请选择数据源（或分组）")
+    srcs = [datastore.get_source(sid) for sid in ids]
+    srcs = [s for s in srcs if s]
+    if not srcs:
         raise HTTPException(404, "数据源不存在")
-    stored = src.get("stored_path", "")
-    ext = src.get("ext", "")
 
-    # 模板解析：库中模板 > 直传文本 > 无（规则引擎用默认 HTML 模板；AI 方式自主编写）
+    # 2) 模板解析：库中模板（优先原文 source_text）> 直传文本 > 默认骨架
     template_text = (payload.template_text or "").strip()
     if payload.template_id:
         t = datastore.get_template_lib(payload.template_id)
         if t:
-            template_text = t.get("html") or ""
+            # 「原地更新」用模板原文（保留论述风格/用词/结构）；没有原文时退回 HTML
+            template_text = (t.get("source_text") or "").strip() or (t.get("html") or "").strip()
 
     gen_reqs = rules_mod.load_rules().get("generation_requirements") or []
     gen_reqs_text = "\n".join(f"- {r.get('title')}: {r.get('description')}" for r in gen_reqs) or "（无）"
+    default_tpl = "一、总体进展\n二、关键数据\n三、风险与问题\n四、下周计划"
+    if not template_text:
+        template_text = default_tpl
 
-    # 1) 有 dataset_sections → 模板+数据集生成
-    sections = datastore.get_dataset_sections(payload.source_id)
-    if sections:
-        if not template_text:
-            template_text = "一、总体进展\n二、关键数据\n三、风险与问题\n四、下周计划"
-        dataset_text = sections_to_markdown(sections)
-        entry = prompts_mod.get_prompt("dataset_report")
-        prompt = prompts_mod.render_user(entry, {
-            "template_text": template_text[:8000],
-            "dataset_text": dataset_text[:20000],
-            "generation_requirements": gen_reqs_text,
-        })
-        out = ai_mod.call_with_cache(
-            "dataset_report",
-            [{"role": "system", "content": entry.get("system", "")},
-             {"role": "user", "content": prompt}],
-            temperature=0.3, max_tokens=4000,
-        )
-        html = _strip_code_block(out or "")
-        if "<" in html and ">" in html:
-            return {"ok": True, "mode": "dataset", "html": html,
-                    "note": f"已按模板从数据集生成（{len(sections)} 个板块）"}
-
-    # 2) 无数据集表格结构 → 用已入库的 AI 分析条目（items）
-    items = datastore.query_items(source_id=payload.source_id, limit=800)
-    if items:
+    # 3) 汇总组内所有源的数据：数据集板块（优先）+ AI 提取条目
+    all_sections = []
+    for sid in ids:
+        secs = datastore.get_dataset_sections(sid)
+        if secs:
+            all_sections.extend(secs)
+    dataset_parts = []
+    if all_sections:
+        dataset_parts.append(sections_to_markdown(all_sections))
+    all_items = []
+    for sid in ids:
+        all_items.extend(datastore.query_items(source_id=sid, limit=800))
+    if all_items:
         from collections import defaultdict
         groups = defaultdict(list)
-        for it in items:
+        for it in all_items:
             sec = (it.get("payload") or {}).get("section") or it.get("kind") or "其他"
             groups[sec].append(it)
         parts = []
@@ -2172,28 +2203,30 @@ def generate_one(payload: GenerateOneIn):
                 detail = " | ".join(f"{k}={v}" for k, v in list(fields.items())[:6]) if fields else ""
                 head.append(f"- {it.get('name','')}" + (f"（{detail}）" if detail else ""))
             parts.append("\n".join(head))
-        items_text = "\n\n".join(parts)
-        if not template_text:
-            template_text = "一、总体进展\n二、关键数据\n三、风险与问题\n四、下周计划"
-        entry = prompts_mod.get_prompt("dataset_report")
-        prompt = prompts_mod.render_user(entry, {
-            "template_text": template_text[:8000],
-            "dataset_text": items_text[:20000],
-            "generation_requirements": gen_reqs_text,
-        })
-        out = ai_mod.call_with_cache(
-            "dataset_report",
-            [{"role": "system", "content": entry.get("system", "")},
-             {"role": "user", "content": prompt}],
-            temperature=0.3, max_tokens=4000,
-        )
-        html = _strip_code_block(out or "")
-        if "<" in html and ">" in html:
-            return {"ok": True, "mode": "ai_items", "html": html,
-                    "note": f"AI 从已分析数据生成（{len(items)} 条 AI 提取条目，{len(groups)} 个板块）"}
-        raise HTTPException(502, "AI 未产出有效 HTML")
+        dataset_parts.append("\n\n".join(parts))
 
-    raise HTTPException(400, "该数据源还没有 AI 分析结果：请先配置 API Key 并重新上传（上传即自动分析），或检查源文件")
+    if not dataset_parts:
+        raise HTTPException(400, "所选数据还没有 AI 分析结果：请先配置 API Key 并重新上传（上传即自动分析），或检查源文件")
+
+    dataset_text = "\n\n".join(dataset_parts)
+    entry = prompts_mod.get_prompt("dataset_report")
+    prompt = prompts_mod.render_user(entry, {
+        "template_text": template_text[:8000],
+        "dataset_text": dataset_text[:20000],
+        "generation_requirements": gen_reqs_text,
+    })
+    out = ai_mod.call_with_cache(
+        "dataset_report",
+        [{"role": "system", "content": entry.get("system", "")},
+         {"role": "user", "content": prompt}],
+        temperature=0.3, max_tokens=4000,
+    )
+    html = _strip_code_block(out or "")
+    if "<" not in html or ">" not in html:
+        raise HTTPException(502, "AI 未产出有效 HTML")
+    mode = "group" if len(ids) > 1 else ("dataset" if all_sections else "ai_items")
+    return {"ok": True, "mode": mode, "html": html,
+            "note": f"已按模板原地更新生成（{len(ids)} 个源，AI 条目 {len(all_items)} 条，板块 {len(all_sections)} 个）"}
 
 
 def _strip_code_block(out: str) -> str:

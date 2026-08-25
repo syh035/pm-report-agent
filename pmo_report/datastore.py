@@ -55,6 +55,11 @@ def _conn() -> sqlite3.Connection:
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         key TEXT, system TEXT, user TEXT, examples TEXT,
         created_at TEXT)""")
+    # 迁移：旧库补充新列（templates.source_text 模板原文，供「原地更新」生成）
+    try:
+        c.execute("ALTER TABLE templates ADD COLUMN source_text TEXT")
+    except sqlite3.OperationalError:
+        pass  # 列已存在
     c.commit()
     return c
 
@@ -352,13 +357,13 @@ def load_workspace() -> Optional[Dict]:
 
 # ---------------- 模板库（命名入库 / 分类 / 按日期） ----------------
 def save_template_lib(name: str, html: str, ttype: str = "week",
-                      category: str = "") -> int:
+                      category: str = "", source_text: str = "") -> int:
     """命名入库一个模板（按类型 week/day + 自定义分类 + 日期）。返回 id。"""
     with _conn() as c:
         cur = c.execute(
-            "INSERT INTO templates(name,ttype,category,html,created_at) VALUES(?,?,?,?,?)",
+            "INSERT INTO templates(name,ttype,category,html,source_text,created_at) VALUES(?,?,?,?,?,?)",
             (name or "未命名模板", ttype or "week", category or "",
-             html or "", datetime.now().strftime("%Y-%m-%d %H:%M:%S")),
+             html or "", source_text or "", datetime.now().strftime("%Y-%m-%d %H:%M:%S")),
         )
         return int(cur.lastrowid)
 
@@ -452,3 +457,35 @@ def get_prompt_version(vid: int) -> Optional[Dict]:
     except Exception:
         d["examples_list"] = []
     return d
+
+
+# ---------------- 源文件分组（周报可引用整组数据） ----------------
+def set_source_group(sid: str, group_name: str) -> None:
+    """把源文件移入/移出分组（group_name 为空 = 移出）。"""
+    with _conn() as c:
+        c.execute("UPDATE sources SET group_name=? WHERE id=?", (group_name or "", sid))
+
+
+def source_groups() -> List[Dict]:
+    """分组列表（含成员数），按名称排序。"""
+    with _conn() as c:
+        rows = c.execute(
+            "SELECT group_name AS name, COUNT(*) AS count FROM sources "
+            "WHERE group_name<>'' GROUP BY group_name ORDER BY group_name").fetchall()
+    return [dict(r) for r in rows]
+
+
+def sources_by_group(group_name: str) -> List[Dict]:
+    """某分组下的所有源文件。"""
+    with _conn() as c:
+        rows = c.execute(
+            "SELECT id, filename, uploaded_at, ext, group_name FROM sources WHERE group_name=? ORDER BY uploaded_at",
+            (group_name,)).fetchall()
+    return [dict(r) for r in rows]
+
+
+def delete_source_group(group_name: str) -> int:
+    """删除分组（组内源文件移出分组，不删除文件）。返回移出数量。"""
+    with _conn() as c:
+        cur = c.execute("UPDATE sources SET group_name='' WHERE group_name=?", (group_name,))
+        return cur.rowcount
