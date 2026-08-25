@@ -318,6 +318,7 @@
 
 </div>
 <input type="file" id="uploadInput" multiple style="display:none" accept=".xlsx,.xlsm,.csv,.docx,.pdf">
+<script src="/lib/chatbox.js"></script>
 <script>
 const $ = id => document.getElementById(id);
 let state = { sheet:{}, groups:{}, rules:{}, current:'', lastReport:null, sortBy:'', sortAsc:true, filters:{}, editMode:false, editTasks:[], ignoredNames:[], batchMode:false, batchSel:{} };
@@ -1077,21 +1078,31 @@ async function tplSaveLib(){
   setTimeout(()=>{ $('tplConfirmBox').style.display='none'; $('tplConfirmMsg').textContent=''; }, 1200);
   loadGenTpls();
 }
-async function tplRegenerate(){
+function tplRegenerate(){
   if(!_tplPendingHtml){ alert('请先上传并解析模板'); return; }
-  const newReq = prompt('输入您对模板的调整要求（AI 将基于当前模板微调）：', '把标题改为更正式的写法，保持章节结构不变');
-  if(!newReq || !newReq.trim()) return;
-  $('templateMsg').className=''; $('templateMsg').textContent='AI 正在微调模板…';
-  try{
-    const res = await fetch('/api/template/tune',{method:'POST',headers:{'Content-Type':'application/json'},
-      body:JSON.stringify({template_html:_tplPendingHtml, tune_request:newReq})});
-    const d = await res.json();
-    if(!res.ok){ $('templateMsg').className='msg err'; $('templateMsg').textContent=d.detail||'微调失败'; return; }
-    _tplPendingHtml = d.html;
-    $('templateMsg').className='msg ok';
-    $('templateMsg').textContent='已微调，请确认后命名入库：';
-    $('templatePreview').innerHTML = d.html;
-  }catch(e){ $('templateMsg').className='msg err'; $('templateMsg').textContent='微调异常: '+e; }
+  // 弹窗式多轮对话微调：AI 全程可见模板，有来有回，直到点「确认完成」→ finalize 输出最终 HTML
+  const tplPreview = (_tplPendingHtml||'').slice(0,2500);
+  openChatBox({
+    purpose: 'template_tune',
+    title: '模板对话微调（可多轮，直到确认完成）',
+    initial: [{role:'user', content:'这是当前周报模板（如需看全文请告诉我）：\n' + tplPreview + '\n\n请帮我调整：把标题改为更正式的写法，保持章节结构不变。'}],
+    extraContext: '当前模板 HTML：\n' + (_tplPendingHtml||''),
+    onFinalize: onTplFinalize,
+  });
+}
+async function onTplFinalize(resultText){
+  let html = resultText || '';
+  // 若被代码块包裹则剥离
+  if(html.startsWith('```')) html = html.replace(/^```(?:html)?\s*/,'').replace(/```\s*$/,'');
+  if(!html || html.indexOf('<')===-1){
+    $('templateMsg').className='msg err';
+    $('templateMsg').textContent='AI 未产出有效 HTML：'+resultText.slice(0,200);
+    return;
+  }
+  _tplPendingHtml = html;
+  $('templateMsg').className='msg ok';
+  $('templateMsg').textContent='已微调，请确认后命名入库：';
+  $('templatePreview').innerHTML = html;
 }
 function tplEditHtml(){
   // 主页面内直接编辑：预览区切换为 HTML 源码编辑框（不再用弹窗）

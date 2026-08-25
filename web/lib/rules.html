@@ -92,6 +92,7 @@
   <div id="rulesList"></div>
 </div>
 
+<script src="/lib/chatbox.js"></script>
 <script>
 const $ = id => document.getElementById(id);
 let rules = {}, meta = {}, pendingDraft = null, importDrafts = [];
@@ -241,40 +242,21 @@ async function extractRuleDoc(){
 }
 async function importRuleDoc(){
   if(!window._ruleDocText){ alert('请先载入规则文档'); return; }
-  $('ruleDocHint').textContent = 'AI 批量理解中…';
-  const res = await fetch('/api/rules/import-text',{method:'POST',headers:{'Content-Type':'application/json'},
-    body:JSON.stringify({text: window._ruleDocText})});
-  const d = await res.json();
-  if(!res.ok){ $('ruleDocHint').textContent = '失败: '+(d.detail||JSON.stringify(d)); return; }
-  importDrafts = d.drafts||[];
-  $('ruleDocHint').textContent = d.note||'';
-  renderImportDrafts();
+  // 弹窗式多轮对话：AI 读文档逐条理解回显，用户可修正，确认完成 → finalize 规则数组直接写入
+  const docPreview = window._ruleDocText.slice(0,3000);
+  const forceType = $('ruleImportType') ? $('ruleImportType').value : '';
+  const forceHint = forceType==='requirement' ? '（全部按分析要求处理）'
+                  : forceType==='generation_requirement' ? '（全部按生成要求处理）' : '';
+  openChatBox({
+    purpose: 'rule_doc_import',
+    title: '规则文档导入（AI 逐条理解确认，可多轮修正）',
+    initial: [{role:'user', content:'请从以下规则文档中逐条理解并回显给我确认'+forceHint+'：\n'+docPreview}],
+    extraContext: window._ruleDocText,
+    onFinalize: onRuleFinalize,   // 复用规则 finalize（直接写入）
+  });
 }
-function renderImportDrafts(){
-  const box = $('importDrafts');
-  box.innerHTML = importDrafts.length ? importDrafts.map((dr,i)=>{
-    const typeLabel = dr.type==='generation_requirement'?'生成要求':dr.type==='requirement'?'分析要求':(dr.type==='rule'?'数值阈值':dr.type);
-    return `<div class="draft-item">
-      <input type="checkbox" class="ck" id="imp_${i}" checked>
-      <span><b>${esc(dr.title)}</b> <span class="tag">${esc(typeLabel)}</span></span>
-      <span style="color:var(--muted);font-size:12px;">${esc(dr.description)}</span>
-    </div>`;
-  }).join('') + `<div style="margin-top:10px;"><button class="btn btn-primary" onclick="confirmImports()">确认写入勾选项</button></div>` : '';
-}
-async function confirmImports(){
-  const sel = importDrafts.map((dr,i)=>$('imp_'+i)?.checked ? dr : null).filter(Boolean);
-  if(!sel.length){ alert('请勾选要写入的规则'); return; }
-  let n = 0;
-  for(const dr of sel){
-    const res = await fetch('/api/rules/converse/confirm',{method:'POST',headers:{'Content-Type':'application/json'},
-      body:JSON.stringify({draft: dr})});
-    const d = await res.json();
-    if(res.ok && d.ok) n++;
-  }
-  alert(`已写入 ${n}/${sel.length} 条`);
-  importDrafts = []; $('importDrafts').innerHTML=''; $('ruleDocHint').textContent='';
-  load();
-}
+
+
 function esc(s){ return String(s??'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
 load();
 </script>
