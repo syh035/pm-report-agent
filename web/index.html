@@ -236,7 +236,6 @@
           </select>
           <input type="text" id="genProject" placeholder="项目名称（可选）" style="width:160px">
           <input type="text" id="genPeriod" placeholder="周期，如 2026-W33" style="width:130px">
-          <label style="font-size:12px;display:flex;gap:4px;align-items:center;"><input type="checkbox" id="genUseAI" checked>AI增强</label>
           <button class="btn btn-primary" onclick="generateReport()">生成</button>
         </div>
         <div class="hint" style="margin-top:6px;" id="genHint"></div>
@@ -850,7 +849,6 @@ async function generateReport(){
         report_type: genReportType,
         project_name: $('genProject').value,
         period: $('genPeriod').value,
-        use_ai: $('genUseAI').checked,
       })});
     const d=await res.json();
     if(!res.ok) throw new Error(d.detail||JSON.stringify(d));

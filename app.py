@@ -1998,7 +1998,6 @@ class GenerateOneIn(BaseModel):
     report_type: str = "week"
     project_name: str = ""
     period: str = ""
-    use_ai: bool = True
 
 
 @app.post("/api/generate/one")
