@@ -139,7 +139,8 @@ def test_prompts_management():
         e2 = pm.get_prompt("report_overview")
         assert e2["system"] == "测试系统" and e2["examples"] == ["我的样稿：本周完成5项，待完成3项，卡点在于风险清单"]
         st = pm.prompts_status()
-        assert st["items"][0]["modified"] is True
+        gen_item = next((it for it in st["items"] if it["key"] == "ai_generation"), None)
+        assert gen_item is not None and gen_item["modified"] is True
     finally:
         pm.reset_prompts()
         if orig_exists:
