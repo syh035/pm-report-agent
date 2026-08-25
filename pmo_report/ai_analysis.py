@@ -80,7 +80,7 @@ def ai_assist_analysis(source_id: str, stored_path: str, ext: str,
             "ai_analysis",
             [{"role": "system", "content": entry.get("system", "")},
              {"role": "user", "content": prompt}],
-            temperature=0.1, max_tokens=3000,
+            temperature=0.1, max_tokens=6000,
         )
         data = _parse_analysis_json(out or "")
         sections = data.get("sections") or []

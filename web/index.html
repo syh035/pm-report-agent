@@ -21,24 +21,6 @@
   .main { flex:1; overflow-y:auto; padding:20px; }
 
   .side-title { font-size:12px; font-weight:600; color:var(--muted); padding:6px 8px; text-transform:uppercase; letter-spacing:.05em; }
-  .tree-item { border-radius:6px; padding:6px 10px; font-size:13px; cursor:pointer; display:flex; align-items:center; gap:8px; }
-  .tree-item:hover { background:#EEF2FF; }
-  .tree-item.active { background:var(--primary); color:#fff; }
-  .tree-item .ghost { margin-left:auto; opacity:0; transition:.15s; }
-  .tree-item:hover .ghost { opacity:.6; }
-  .tree-item .ghost:hover { opacity:1; }
-  .tree-item.batch-sel { background:#E3E9FF; }
-  body.dark .tree-item.batch-sel{background:#2A2D3A;}
-  .batch-check { width:14px; height:14px; accent-color:var(--primary); cursor:pointer; flex:none; }
-  #batchBar { display:none; background:var(--primary); color:#fff; border-radius:8px; padding:8px 10px; margin-bottom:8px; font-size:12px; line-height:1.8; }
-  #batchBar .bb-btn { background:rgba(255,255,255,.18); border:none; color:#fff; border-radius:6px; padding:2px 9px; font-size:12px; cursor:pointer; margin-right:6px; }
-  #batchBar .bb-btn:hover { background:rgba(255,255,255,.32); }
-  #batchBar select { background:#fff; color:#333; border:none; border-radius:6px; padding:2px 6px; font-size:12px; }
-  .side-btn { width:100%; margin-top:8px; padding:8px; border:1px dashed var(--border); border-radius:6px; background:transparent; color:var(--muted); cursor:pointer; font-size:12px; }
-  .side-btn:hover { border-color:var(--primary); color:var(--primary); }
-  .group-head { display:flex; align-items:center; gap:6px; padding:4px 8px; font-size:13px; font-weight:600; border-radius:6px; cursor:pointer; }
-  .group-head:hover { background:#F0F2F5; }
-  .child { padding-left:20px; }
 
   .tabs { display:flex; border-bottom:1px solid var(--border); margin-bottom:16px; }
   .tab { padding:8px 16px; cursor:pointer; font-weight:500; color:var(--muted); border-bottom:2px solid transparent; }
@@ -77,7 +59,6 @@
   .color-dot{display:inline-block;width:16px;height:16px;border-radius:4px;vertical-align:middle;border:1px solid #ccc;}
   /* 深色模式（body.dark 覆盖 CSS 变量） */
   body.dark{--primary:#6B8AFF;--primary-dark:#5A76E8;--bg:#17181F;--card:#20222B;--border:#34374A;--text:#E8EAF2;--muted:#9AA0B5;}
-  body.dark .tree-item:hover{background:#2A2D3A;} body.dark .group-head:hover{background:#262936;}
   body.dark .dropzone{background:#1B1D26;} body.dark th{background:#1B1D26;}
   body.dark tr:hover td{background:#262936;} body.dark .report-content{background:#20222B;}
   body.dark #moduleLib,body.dark #templatePreview{background:#1B1D26;}
@@ -89,7 +70,7 @@
   .risk-item{border-left:3px solid;padding:6px 10px;margin-bottom:6px;font-size:13px;background:var(--card);border-radius:4px;}
   /* 打印友好：只输出当前周报 */
   @media print{
-    .topbar,.sidebar,.tabs,.btn,.dropzone,.filters,#onboard,#exportRow,#healthBox,#taskEditBox{display:none !important;}
+    .topbar,.sidebar,.tabs,.btn,.dropzone,.filters,#onboard,#exportRow{display:none !important;}
     .layout{display:block;height:auto;} .main{overflow:visible;padding:0;}
     .panel{display:block !important;} .card{border:none;padding:0;margin:0;}
     .report-content{border:none;padding:0;}
@@ -115,22 +96,7 @@
 <div class="layout">
   <!-- 左侧边栏 -->
   <div class="sidebar">
-    <div class="side-title">工作区
-      <span style="float:right;font-weight:400;text-transform:none;letter-spacing:0">
-        <button class="side-btn" style="display:inline-block;width:auto;margin:0;padding:1px 8px;border-style:solid" id="batchToggle" onclick="toggleBatch()">☑ 批量</button>
-      </span>
-    </div>
-    <div id="batchBar">
-      <b id="batchCount">已选 0 个</b> ·
-      <button class="bb-btn" onclick="batchAll(true)">全选</button>
-      <button class="bb-btn" onclick="batchAll(false)">清空</button><br>
-      <select id="batchGroupSel" onchange="batchMove(this.value)"><option value="">移入分组…</option></select>
-      <button class="bb-btn" onclick="batchUngroup()">移出分组</button>
-      <button class="bb-btn" style="background:rgba(200,60,50,.55)" onclick="batchDelete()">🗑 删除</button>
-    </div>
-    <div id="workspaceTree"></div>
-    <button class="side-btn" onclick="createGroup()">＋ 新建分组</button>
-    <div class="side-title" style="margin-top:10px;">📦 源数据 <span id="srcBadge" style="opacity:.6"></span>
+    <div class="side-title">📦 源数据 <span id="srcBadge" style="opacity:.6"></span>
       <span style="float:right;font-weight:400;text-transform:none;letter-spacing:0;">
         <input type="date" id="srcDate" style="font-size:11px;padding:1px 4px;border:1px solid var(--border);border-radius:6px;" onchange="srcDateChanged()" title="按日期筛选源数据">
       </span>
@@ -140,7 +106,7 @@
       <button class="f" id="srcModeAll" style="background:#EEF2FF;color:var(--primary);border:none;border-radius:6px;padding:2px 8px;cursor:pointer;" onclick="setSrcMode('all')">全部</button>
     </div>
     <div id="sourceList" style="font-size:12px;color:var(--muted);padding:2px 8px;">（加载中…）</div>
-    <div style="font-size:11px;color:var(--muted);padding:6px 8px;line-height:1.6;">💡 上传资料用右上角按钮；源数据默认显示当前选中 sheet 用到的文件，可切「全部」或按日期筛选</div>
+    <div style="font-size:11px;color:var(--muted);padding:6px 8px;line-height:1.6;">💡 上传资料用右上角按钮；点击源文件 → 右侧查看其 AI 提取条目（任务/指标/风险/里程碑/决策，字段自适应）。</div>
   </div>
 
   <!-- 主区域 -->
@@ -177,18 +143,7 @@
     <div class="panel active" id="panel-data">
       <div class="card" id="currentView" style="display:none;">
         <h2 id="viewTitle"></h2>
-        <div class="row" style="margin-bottom:10px;">
-          <button class="btn btn-outline" onclick="toggleEditTasks()">✏ 编辑任务（校对）</button>
-          <button class="btn btn-outline" onclick="aiReviewSheet()">🤖 AI 深度解析</button>
-          <button class="btn btn-outline" onclick="exportTasks()">导出明细 CSV</button>
-          <span id="healthBadge" style="font-size:12px;color:var(--muted);"></span>
-          <span id="parseReport" style="font-size:12px;color:var(--muted);"></span>
-        </div>
-        <div id="healthBox" style="display:none;margin-bottom:12px;"></div>
-        <div id="taskEditBox" style="display:none;margin-bottom:12px;"></div>
         <div id="groupExtra"></div>
-        <div class="kpi-grid" id="viewKpis"></div>
-        <div class="filters" id="viewFilters"></div>
         <div class="view-table-wrap" id="viewTable"></div>
       </div>
       <div class="card" id="emptyHint">
@@ -287,7 +242,6 @@
   </div>
 </div>
 
-<div id="moveMenu" style="display:none;position:fixed;background:var(--card);border:1px solid var(--border);border-radius:6px;box-shadow:0 4px 14px rgba(0,0,0,.15);z-index:99;min-width:170px;padding:5px;"></div>
 <div id="dupModal" style="display:none;position:fixed;left:0;top:0;right:0;bottom:0;background:rgba(0,0,0,.35);z-index:100;overflow:auto;">
   <div style="background:var(--card);max-width:460px;margin:120px auto;border-radius:10px;padding:18px;">
     <h3 style="margin:0 0 8px;">⚠️ 检测到同名文件</h3>
@@ -311,7 +265,7 @@
 <script src="/lib/chatbox.js"></script>
 <script>
 const $ = id => document.getElementById(id);
-let state = { sheet:{}, groups:{}, rules:{}, current:'', lastReport:null, sortBy:'', sortAsc:true, filters:{}, editMode:false, editTasks:[], ignoredNames:[], batchMode:false, batchSel:{} };
+let state = { sheet:{}, groups:{}, rules:{}, current:'', lastReport:null, sortBy:'', sortAsc:true, filters:{}, editMode:false, editTasks:[], ignoredNames:[] };
 let genReportType = 'week';   // 文稿类型：week 周报 / day 日报
 let histType = '';            // 文稿库类型筛选
 let histSel = {};             // 文稿库多选集合
@@ -357,61 +311,13 @@ async function uploadFiles(files){
   const d = await res.json();
   if(!res.ok){ alert('解析失败: '+JSON.stringify(d)); return; }
   loadWorkspace();
-  if(d.created && d.created.length) selectSheet(d.created[0]);
+  if(d.created && d.created.length) selectSource(d.created[0]);
 }
 
-// ============ 工作区侧边栏 ============
+// ============ 源数据侧边栏 ============
 async function loadWorkspace(){
-  const res = await fetch('/api/workspace'); const d = await res.json();
-  state.sheet = d.sheets; state.groups = d.groups;
-  let html = '';
-  // 分组（头显示成员数；可拖入 sheet）
-  for(const gid in state.groups){
-    const g = state.groups[gid];
-    const empty = !g.sheets.length ? '<div style="font-size:11px;color:var(--muted);padding:2px 8px 6px 22px;">（空，拖入或点 sheet 的 📁 移入）</div>' : '';
-    html += `<div><div class="group-head" onclick="selectGroup('${gid}')"
-        ondragover="event.preventDefault();this.style.background='#E3E9FF'"
-        ondragleave="this.style.background=''"
-        ondrop="event.preventDefault();this.style.background='';sheetDrop(event,'${gid}')">${batchCheckAll(gid)}📁 ${esc(g.name||'分组')} <span style="font-size:11px;opacity:.7">(${g.sheets.length})</span>
-      <span class="ghost" style="margin-left:auto" onclick="event.stopPropagation();delGroup('${gid}')">🗑</span></div><div class="child">${empty}`;
-    g.sheets.forEach(sid=>{ html += itemHtml(sid, state.sheet[sid]); });
-    html += `</div></div>`;
-  }
-  // 待分组文件夹：上传的新数据先落在这里，拖入分组或点 📁 移入
-  const grouped = new Set(Object.values(state.groups).flatMap(g=>g.sheets));
-  const pending = Object.keys(state.sheet).filter(sid=>!grouped.has(sid));
-  if(pending.length){
-    html += `<div><div class="group-head" style="color:var(--muted)"
-        ondragover="event.preventDefault()" >📥 待分组 <span style="font-size:11px;opacity:.7">(${pending.length})</span></div><div class="child">`;
-    pending.forEach(sid=>{ html += itemHtml(sid, state.sheet[sid]); });
-    html += `</div></div>`;
-  }
-  $('workspaceTree').innerHTML = html || '<div style="font-size:12px;color:var(--muted);padding:8px">（空，请上传资料）</div>';
-  updateBatchBar();
-  loadSourceList();   // 刷新源数据区（新上传的文件会出现在这里）
-}
-function batchCheckAll(gid){
-  if(!state.batchMode) return '';
-  const g = state.groups[gid]||{};
-  const all = (g.sheets||[]).filter(sid=>state.sheet[sid]);
-  const checked = all.length && all.every(sid=>state.batchSel[sid]);
-  return `<input type="checkbox" class="batch-check" ${checked?'checked':''} title="全选该分组"
-    onclick="event.stopPropagation();toggleGroupSel('${gid}')">`;
-}
-function itemHtml(sid, sh){
-  if(!sh) return '';
-  const sel = state.batchMode && state.batchSel[sid];
-  return `<div class="tree-item ${sel?'batch-sel':''} ${state.current===sid?'active':''}" onclick="selectSheet('${sid}')"
-      draggable="true" ondragstart="sheetDrag(event,'${sid}')">${state.batchMode?`<input type="checkbox" class="batch-check" data-sid="${sid}" ${sel?'checked':''} onclick="event.stopPropagation();toggleSel('${sid}')">`:''}🧾 ${esc(sh.name)}
-    <span class="ghost" onclick="event.stopPropagation();showMoveMenu('${sid}',event)" title="移入/移出分组">📁</span>
-    <span class="ghost" onclick="event.stopPropagation();renameSheet('${sid}')">✏</span>
-    <span class="ghost" onclick="event.stopPropagation();delSheet('${sid}')">🗑</span></div>`;
-}
-// —— 移入/移出分组（下拉菜单 + 拖拽） ——
-function sheetDrag(ev, sid){ ev.dataTransfer.setData('text/sheet-id', sid); }
-function sheetDrop(ev, gid){
-  const sid = ev.dataTransfer.getData('text/sheet-id');
-  if(sid) moveToGroup(sid, gid);
+  // 主体归 AI：工作区=源文件列表（无 sheet/分组概念），仅刷新源数据区
+  loadSourceList();
 }
 // —— 📦 源数据（原始文件保留 + 行级对照） ——
 let srcMode = 'cur';   // cur=当前选中sheet的源 | all=全部 | date=按日期
@@ -436,28 +342,30 @@ function srcDateChanged(){ if($('srcDate').value) srcMode='date'; loadSourceList
 function renderSourceList(items){
   let list = items;
   if(srcMode === 'cur'){
-    // 当前选中 sheet 用到的源文件
+    // 当前选中源文件
     const cur = state.current||'';
     let srcId = '';
-    if(cur.startsWith('sheet:')) srcId = state.sheet[cur.split(':')[1]]?.source_id||'';
+    if(cur.startsWith('source:')) srcId = cur.split(':')[1];
+    else if(cur.startsWith('sheet:')) srcId = state.sheet[cur.split(':')[1]]?.source_id||'';
     else if(cur.startsWith('group:')){
       const g = state.groups[cur.split(':')[1]];
       const sids = (g?.sheets||[]);
       const ids = new Set(sids.map(s=>state.sheet[s]?.source_id).filter(Boolean));
       list = items.filter(s=>ids.has(s.id));
     } else {
-      list = [];
+      list = [];  // 未选中任何视图时下面按“全部”兜底
     }
     if(srcId) list = items.filter(s=>s.id===srcId);
+    else if(!list.length) list = items;  // 无当前选中 → 显示全部源文件
   } else if(srcMode === 'date'){
     const dt = $('srcDate').value;
     if(dt) list = items.filter(s=>(s.uploaded_at||'').slice(0,10)===dt);
   }
   $('sourceList').innerHTML = list.length ? list.map(s=>
-    `<div style="display:flex;align-items:center;gap:4px;padding:3px 2px;font-size:12px;cursor:pointer;border-radius:4px;" onmouseover="this.style.background='#EEF2FF'" onmouseout="this.style.background=''" onclick="viewSource('${s.id}')">
+    `<div style="display:flex;align-items:center;gap:4px;padding:3px 2px;font-size:12px;cursor:pointer;border-radius:4px;" onmouseover="this.style.background='#EEF2FF'" onmouseout="this.style.background=''" onclick="selectSource('${s.id}')">
       <span title="${esc(s.filename)}">${s.has_dataset?'🗂':'📄'} ${esc(s.filename.length>14?s.filename.slice(0,14)+'…':s.filename)}</span>
       <span style="margin-left:auto;font-size:10px;color:var(--muted)">${esc((s.uploaded_at||'').slice(5,16))}</span>
-      <span style="font-size:10px;color:var(--muted)">${s.n_sheets||0}表</span>
+      <span style="font-size:10px;color:var(--muted);cursor:pointer;" title="详情（原文/下载）" onclick="event.stopPropagation();viewSource('${s.id}')">⋯</span>
     </div>`).join('') : '<div style="font-size:12px;color:var(--muted)">（无匹配源文件，可切「全部」或选日期）</div>';
 }
 async function viewSource(sid){
@@ -524,503 +432,83 @@ async function downloadSource(sid){
   a.href = '/api/sources/'+sid+'/download'; a.download='';
   document.body.appendChild(a); a.click(); a.remove();
 }
-function showMoveMenu(sid, ev){
-  ev.stopPropagation();
-  const groups = Object.keys(state.groups||{});
-  const curG = Object.keys(state.groups||{}).find(gid => (state.groups[gid].sheets||[]).includes(sid)) || '';
-  let html = groups.map(gid=>`<div class="move-opt ${gid===curG?'sel':''}" onclick="moveToGroup('${sid}','${gid}')">📁 ${esc(state.groups[gid].name)}${gid===curG?' ✓':''}</div>`).join('');
-  if(curG) html += `<div class="move-opt" onclick="moveToGroup('${sid}','')">🚫 移出分组</div>`;
-  const m = $('moveMenu');
-  m.innerHTML = html || '<div style="font-size:12px;color:var(--muted);padding:6px 10px">（暂无分组，先点「＋ 新建分组」）</div>';
-  m.style.display='block';
-  const r = ev.currentTarget.getBoundingClientRect();
-  m.style.left = Math.max(4, Math.min(r.right+4, window.innerWidth-190))+'px';
-  m.style.top = (r.bottom+4)+'px';
-}
-async function moveToGroup(sid, gid){
-  $('moveMenu').style.display='none';
-  if(gid){
-    await fetch('/api/workspace/groups/'+gid+'/sheet',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({sheet_id:sid})});
-  }else{
-    await fetch('/api/workspace/sheet/'+sid+'/ungroup',{method:'POST'});
-  }
-  loadWorkspace();
-  // 若当前正显示该分组/被移动 sheet 的视图，刷新
-  renderTableForCurrent();
-}
- async function selectSheet(sid){
-  state.current = 'sheet:'+sid; $('emptyHint').style.display='none'; $('currentView').style.display='block';
-  renderSheetView(state.sheet[sid]);
-  if(srcMode === 'cur') loadSourceList();
-}
-async function selectGroup(gid){
-  const g = state.groups[gid]; state.current = 'group:'+gid;
-  $('emptyHint').style.display='none'; $('currentView').style.display='block';
-  renderGroupView(g);
-  if(srcMode === 'cur') loadSourceList();
-}
-async function delSheet(sid){ if(!confirm('删除该 sheet？'))return; await fetch('/api/workspace/sheet/'+sid+'/delete',{method:'POST'}); loadWorkspace(); }
-async function renameSheet(sid){
-  const name = prompt('新名称：', state.sheet[sid]?.name||'');
-  if(!name) return;
-  await fetch('/api/workspace/sheet/'+sid+'/rename',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name})});
-  loadWorkspace();
-}
-async function createGroup(){ const n=prompt('分组名称：','新分组'); if(!n)return; await fetch('/api/workspace/groups',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name:n})}); loadWorkspace(); }
-async function delGroup(gid){ if(!confirm('删除分组？（其中的 sheet 不会被删除）'))return; await fetch('/api/workspace/groups/'+gid+'/delete',{method:'POST'}); loadWorkspace(); }
-
-// ============ 工作区批量选取 ============
-function toggleBatch(){
-  state.batchMode = !state.batchMode;
-  if(!state.batchMode) state.batchSel = {};
-  $('batchToggle').textContent = state.batchMode ? '✓ 完成' : '☑ 批量';
-  loadWorkspace();
-  updateBatchBar();
-}
-function toggleSel(sid){
-  if(state.batchSel[sid]) delete state.batchSel[sid]; else state.batchSel[sid] = true;
-  updateBatchBar();
-  // 仅刷新该项的样式（不重建整树，保留拖拽状态）
-  document.querySelectorAll('#workspaceTree .tree-item').forEach(it=>{
-    const cb = it.querySelector('input.batch-check');
-    if(cb && cb.getAttribute('data-sid')===sid){
-      cb.checked = !!state.batchSel[sid];
-      it.classList.toggle('batch-sel', !!state.batchSel[sid]);
-    }
-  });
-}
-function toggleGroupSel(gid){
-  const all = (state.groups[gid]?.sheets||[]).filter(sid=>state.sheet[sid]);
-  const checked = all.length && all.every(sid=>state.batchSel[sid]);
-  all.forEach(sid=>{ if(checked) delete state.batchSel[sid]; else state.batchSel[sid]=true; });
-  updateBatchBar(); loadWorkspace();
-}
-function batchAll(on){
-  Object.keys(state.sheet).forEach(sid=>{ if(on) state.batchSel[sid]=true; else delete state.batchSel[sid]; });
-  updateBatchBar(); loadWorkspace();
-}
-function batchIds(){ return Object.keys(state.batchSel); }
-function updateBatchBar(){
-  const bar = $('batchBar'); if(!bar) return;
-  bar.style.display = state.batchMode ? 'block' : 'none';
-  if(!state.batchMode) return;
-  $('batchCount').textContent = '已选 ' + batchIds().length + ' 个';
-  const sel = $('batchGroupSel');
-  const cur = sel.value;
-  sel.innerHTML = '<option value="">移入分组…</option>' +
-    Object.keys(state.groups||{}).map(gid=>`<option value="${gid}">📁 ${esc(state.groups[gid].name)}</option>`).join('');
-  sel.value = cur && state.groups[cur] ? cur : '';
-}
-async function batchMove(gid){
-  if(!gid){ updateBatchBar(); return; }
-  const ids = batchIds();
-  if(!ids.length){ alert('请先勾选 sheet'); updateBatchBar(); return; }
-  const res = await fetch('/api/workspace/batch',{method:'POST',headers:{'Content-Type':'application/json'},
-    body:JSON.stringify({action:'move', sheet_ids:ids, gid})});
-  const d = await res.json();
-  if(!res.ok){ alert('批量移入失败: '+JSON.stringify(d)); return; }
-  alert(`已将 ${d.done.length} 个 sheet 移入「${state.groups[gid].name}」`);
-  state.batchSel = {}; loadWorkspace(); renderTableForCurrent();
-}
-async function batchUngroup(){
-  const ids = batchIds();
-  if(!ids.length){ alert('请先勾选 sheet'); return; }
-  if(!confirm(`将 ${ids.length} 个 sheet 移出所有分组？`)) return;
-  const res = await fetch('/api/workspace/batch',{method:'POST',headers:{'Content-Type':'application/json'},
-    body:JSON.stringify({action:'ungroup', sheet_ids:ids})});
-  const d = await res.json();
-  if(!res.ok){ alert('批量移出失败: '+JSON.stringify(d)); return; }
-  state.batchSel = {}; loadWorkspace(); renderTableForCurrent();
-}
-async function batchDelete(){
-  const ids = batchIds();
-  if(!ids.length){ alert('请先勾选 sheet'); return; }
-  if(!confirm(`确定删除 ${ids.length} 个 sheet？（源数据文件仍保留在「源数据」中）`)) return;
-  const res = await fetch('/api/workspace/batch',{method:'POST',headers:{'Content-Type':'application/json'},
-    body:JSON.stringify({action:'delete', sheet_ids:ids})});
-  const d = await res.json();
-  if(!res.ok){ alert('批量删除失败: '+JSON.stringify(d)); return; }
-  if(d.missing && d.missing.length) alert(`已删除 ${d.done.length} 个；${d.missing.length} 个不存在（跳过）`);
-  state.batchSel = {}; loadWorkspace();
-  if(!state.sheet[(state.current||'').replace('sheet:','')]){ $('emptyHint').style.display='block'; $('currentView').style.display='none'; }
+async function selectSource(sid){
+  state.current = 'source:'+sid; $('emptyHint').style.display='none'; $('currentView').style.display='block';
+  const d = await (await fetch('/api/sources/'+sid)).json();
+  renderSheetView({name: (d.source && d.source.filename) || '数据', source_id: sid});
 }
 
 // ============ 数据表格渲染（含排序筛选颜色） ============
 function renderSheetView(sh){
-  $('viewTitle').textContent = '📊 ' + (sh.name||'sheet') + ' — 单项数据';
+  // 主体归 AI：展示该源文件的 AI 提取条目（字段自适应）
+  $('viewTitle').textContent = '📊 ' + (sh.name||'数据') + ' — AI 提取';
   $('groupExtra').innerHTML='';
-  renderKpisFromTasks(sh.stats);
-  renderHealth(sh.stats?.health);
-  renderParseReport(sh.parse_stats);
-  if(!state.editMode){
-    $('taskEditBox').style.display='none';
-    const tasks = (sh.stats?.tasks||[]).map(t=>({...t}));
-    renderTable(tasks, sh.name);
+  const sourceId = sh.source_id;
+  if(sourceId){
+    fetch('/api/sources/'+sourceId).then(r=>r.json()).then(d=>{
+      const name = (d.source && d.source.filename) || sh.name || '数据';
+      $('viewTitle').textContent = '📊 ' + name + ' — AI 提取';
+      renderAiItems(d.ai_items||[], $('viewTable'), name);
+    }).catch(()=>{ $('viewTable').innerHTML='<div class="empty">加载失败</div>'; });
   } else {
-    renderEditTable(sh.tasks_full||[]);
+    $('viewTable').innerHTML='<div class="empty">该数据无 AI 提取结果（上传后自动分析）</div>';
   }
 }
-function renderParseReport(ps){
-  const box = $('healthBadge').parentNode.querySelector('#parseReport');
+// AI 提取条目通用渲染：按 kind/板块分组，字段自适应（任务表→进度/状态；指标→数值；说明类→文本）
+function renderAiItems(items, box, title){
   if(!box) return;
-  if(!ps || !ps.rule_hits){
-    box.style.display='none'; return;
-  }
-  box.style.display='inline';
-  const parts = [`解析：任务 ${ps.rule_hits} 条`];
-  if(ps.ignored) parts.push(`已忽略干扰 ${ps.ignored} 条`);
-  if(ps.ambiguous) parts.push(`模糊行 ${ps.ambiguous} 条${ps.ai_used?'（AI 兜底）':''}`);
-  box.textContent = '📋 ' + parts.join('｜');
-}
-function renderGroupView(g){
-  $('viewTitle').textContent = '📁 ' + (g.name||'分组') + ' — 分组总览';
-  const s = g.summary;
-  if(!s){
-    $('viewKpis').innerHTML = '<div>空分组：用 sheet 上的 📁 或拖拽把它移入后显示汇总</div>';
-    renderHealth(null); renderParseReport(null); $('groupExtra').innerHTML=''; $('viewFilters').innerHTML=''; $('viewTable').innerHTML='';
+  const kindLabel = {task:'任务', risk:'风险', issue:'依赖/问题', decision:'决策', milestone:'里程碑', metric:'指标', raw:'原始'};
+  if(!items || !items.length){
+    box.innerHTML = '<div class="empty" style="padding:20px;color:var(--muted);font-size:13px;">暂无 AI 提取条目 —— 请配置 API Key 后重新上传（上传即自动分析）</div>';
     return;
   }
-  $('viewKpis').innerHTML = kpiHtml(s.total,'总任务',s.completion_rate+'%','完成率',s.avg_progress+'%','平均实际',s.risk,'风险项')
-    + (s.avg_target_progress!=null?`<div class="kpi"><div class="v">${s.avg_target_progress}%</div><div class="l">平均目标</div></div>`:'')
-    + (s.delayed!=null?`<div class="kpi"><div class="v">${s.delayed}</div><div class="l">滞后</div></div>`:'');
-  renderHealth(s.health);
-  renderParseReport(null);
-  // 分组总览：风险提示区 / 关键路径 / sheet 成员清单
-  const tasks = s.tasks||[];
-  const risks = tasks.filter(t=>t.risk_level && t.risk_level!=='正常');
-  const seen = {}; const riskList = risks.filter(t=>{ if(seen[t.name]) return false; seen[t.name]=1; return true; });
-  let extra = '';
-  if(riskList.length){
-    extra += `<div class="card" style="margin-top:12px;"><h2>🔴 风险与需关注（${riskList.length}）</h2>` + riskList.slice(0,15).map(t=>{
-      const c = t.risk_level==='风险' ? riskColor('风险') : riskColor('关注');
-      return `<div class="risk-item" style="border-left-color:${c}"><span class="pill" style="background:${c}">${t.risk_level}</span> <b>${esc(t.name)}</b> ${t.risk_reason?`<span style="color:var(--muted)">：${esc(t.risk_reason)}</span>`:''}</div>`;
-    }).join('') + `</div>`;
-  }
-  if(s.critical_path && s.critical_path.length){
-    extra += `<div class="card" style="margin-top:12px;"><h2>🔑 关键路径（${s.critical_path.length}）</h2><div style="font-size:13px;line-height:1.8;">${s.critical_path.map(esc).join(' → ')}</div></div>`;
-  }
-  const criticalTasks = tasks.filter(t=>t.is_critical);
-  if(criticalTasks.length){
-    extra += `<div class="card" style="margin-top:12px;"><h2>🔑 人工标注关键任务（${criticalTasks.length}）</h2><div style="font-size:13px;line-height:1.8;">${criticalTasks.map(t=>esc(t.name)).join('、')}</div></div>`;
-  }
-  const members = (g.sheets||[]).map(sid=>{
-    const sh = state.sheet[sid]; if(!sh) return '';
-    const st = sh.stats||{};
-    return `<div class="tree-item" style="margin:2px 0" onclick="selectSheet('${sid}')">🧾 ${esc(sh.name)}
-      <span style="margin-left:auto;font-size:12px;color:var(--muted)">${st.total||0} 任务 · 完成率 ${st.completion_rate!=null?st.completion_rate+'%':'-'}</span></div>`;
+  const byKind = {};
+  items.forEach(it=>{ (byKind[it.kind]=byKind[it.kind]||[]).push(it); });
+  box.innerHTML = Object.entries(byKind).map(([kind, list])=>{
+    const secGroups = {};
+    list.forEach(it=>{
+      const sec = (it.payload||{}).section || '未分板块';
+      (secGroups[sec]=secGroups[sec]||[]).push(it);
+    });
+    const secHtml = Object.entries(secGroups).map(([sec, arr])=>`
+      <div style="margin:8px 0 0;">
+        <div style="font-size:12px;font-weight:600;color:var(--muted);margin-bottom:4px;">${esc(sec)}</div>
+        ${arr.map(it=>renderAiItemCard(it)).join('')}
+      </div>`).join('');
+    return `<div class="card" style="margin-bottom:12px;">
+      <h2 style="margin-bottom:6px;">${esc(kindLabel[kind]||kind)}（${list.length}）</h2>${secHtml}</div>`;
   }).join('');
-  extra += `<div class="card" style="margin-top:12px;"><h2>📁 成员 sheet（${(g.sheets||[]).length}）</h2>${members||'<div style="font-size:12px;color:var(--muted)">（空）</div>'}</div>`;
-  $('groupExtra').innerHTML = extra;
-  $('taskEditBox').style.display='none';
-  renderTable(tasks, g.name);
 }
-function renderHealth(h){
-  const box = $('healthBox'), badge = $('healthBadge');
-  if(!h){ box.style.display='none'; badge.textContent=''; return; }
-  const items = [];
-  if(h.missing_progress && h.missing_progress.length) items.push(`<b>${h.missing_progress.length}</b> 个任务缺进度`);
-  if(h.missing_owner && h.missing_owner.length) items.push(`<b>${h.missing_owner.length}</b> 个任务缺负责人`);
-  if(h.missing_plan_end && h.missing_plan_end.length) items.push(`<b>${h.missing_plan_end.length}</b> 个任务缺计划完成日期`);
-  if(h.missing_plan_start && h.missing_plan_start.length) items.push(`<b>${h.missing_plan_start.length}</b> 个任务缺计划开始日期`);
-  if(h.over_progress && h.over_progress.length) items.push(`<b>${h.over_progress.length}</b> 个任务进度超过 100%`);
-  if(h.date_inverted && h.date_inverted.length) items.push(`<b>${h.date_inverted.length}</b> 个任务日期倒挂（完成早于开始）`);
-  if(h.short_name && h.short_name.length) items.push(`<b>${h.short_name.length}</b> 个任务名过短（疑似乱码/占位）`);
-  if(!items.length){ box.style.display='none'; badge.textContent='✅ 数据完整'; return; }
-  badge.textContent = '⚠️ ' + items.join('，');
-  const dump = (label, names) => names && names.length ? `<div style="margin-top:6px"><b>${label}：</b>${names.slice(0,8).map(esc).join('、')}${names.length>8?' 等':''}</div>` : '';
-  box.style.display='block';
-  box.className='card';
-  box.innerHTML = `<div style="font-size:13px;line-height:1.7;color:#9A6B00;">${items.join('；')}。可点「✏ 编辑任务」补充后重新统计。</div>${dump('缺进度',h.missing_progress)}${dump('缺负责人',h.missing_owner)}${dump('缺计划完成',h.missing_plan_end)}${dump('缺计划开始',h.missing_plan_start)}${dump('进度超100',h.over_progress)}${dump('日期倒挂',h.date_inverted)}${dump('任务名过短',h.short_name)}`;
+function renderAiItemCard(it){
+  const p = it.payload||{};
+  const fields = p.fields || {};
+  const fieldEntries = Object.entries(fields).length ? Object.entries(fields)
+    : Object.entries(p).filter(([k])=>!['section','source_note','fields'].includes(k));
+  const name = esc(it.name||'');
+  const hasProgress = fieldEntries.some(([k])=>k.includes('进度')||k.includes('完成度')||k==='progress');
+  const hasStatus = fieldEntries.some(([k])=>k.includes('状态')||k==='status');
+  const longText = fieldEntries.some(([,v])=>String(v).length>60);
+  if(hasProgress || hasStatus){
+    const prog = fieldEntries.find(([k])=>k.includes('进度')||k.includes('完成度')||k==='progress');
+    const st = fieldEntries.find(([k])=>k.includes('状态')||k==='status');
+    const rest = fieldEntries.filter(([k])=>k!==(prog&&prog[0]) && k!==(st&&st[0])).slice(0,3)
+      .map(([k,v])=>`${esc(k)}: ${esc(String(v).slice(0,30))}`).join(' · ');
+    return `<div style="display:flex;gap:10px;align-items:center;border:1px solid var(--border);border-radius:8px;padding:7px 10px;margin-bottom:6px;background:#fff;">
+      <b style="min-width:150px;">${name}</b>
+      ${prog?`<span style="font-size:12px;">进度 <b>${esc(prog[1])}</b></span>`:''}
+      ${st?`<span class="pill" style="background:#EEF2FF;color:var(--primary);font-size:10px;">${esc(st[1])}</span>`:''}
+      <span style="margin-left:auto;font-size:11px;color:var(--muted);text-align:right;">${rest}</span>
+    </div>`;
+  }
+  if(longText){
+    const text = fieldEntries.map(([k,v])=>`${k}: ${v}`).join('；') || it.name;
+    return `<div style="border:1px solid var(--border);border-radius:8px;padding:8px 12px;margin-bottom:6px;background:#fff;font-size:13px;line-height:1.7;">${esc(name)}${text!==it.name?`<div style="color:var(--muted);font-size:12px;margin-top:3px;">${esc(text)}</div>`:''}</div>`;
+  }
+  const kvs = fieldEntries.slice(0,6).map(([k,v])=>`<span style="display:inline-block;border:1px solid var(--border);border-radius:6px;padding:2px 8px;margin:2px;font-size:11px;background:#FAFBFC;"><b>${esc(k)}</b> ${esc(String(v).slice(0,40))}</span>`).join('');
+  return `<div style="display:flex;gap:8px;align-items:flex-start;border:1px solid var(--border);border-radius:8px;padding:7px 10px;margin-bottom:6px;background:#fff;flex-wrap:wrap;">
+    <b style="font-size:13px;">${name}</b>${kvs}</div>`;
 }
 
-// ============ 任务校对（编辑任务表） ============
-function currentSheetId(){
-  const cur = state.current;
-  return (cur && cur.startsWith('sheet:')) ? cur.split(':')[1] : null;
-}
-function toggleEditTasks(){
-  const sid = currentSheetId();
-  if(!sid){ alert('分组视图暂不支持编辑，请点击左侧单个 sheet 进行校对'); return; }
-  state.editMode = !state.editMode;
-  if(state.editMode){
-    $('viewTable').innerHTML=''; $('viewFilters').innerHTML='';
-    renderEditTable((state.sheet[sid].tasks_full)||[], (state.sheet[sid].rule_tasks)||[]);
-  } else {
-    renderTableForCurrent();
-  }
-}
-function renderEditTable(tasks, ruleTasks){
-  const box = $('taskEditBox');
-  state.editTasks = (tasks||[]).map(t=>({
-    name:t.name||'', owner:t.owner||'', progress:t.progress, status:t.status||'',
-    plan_start:t.plan_start||'', plan_end:t.plan_end||'', actual_end:t.actual_end||'',
-    depends_on:t.depends_on||'', slow_ok:!!t.slow_ok, critical:!!t.critical, note:t.note||'', weight:t.weight!=null?t.weight:1
-  }));
-  state.ruleTasks = ruleTasks||[];
-  // 计算 AI 与规则不一致的行（供 diff 标注）
-  const ruleByName = {};
-  (state.ruleTasks||[]).forEach(r=>{ ruleByName[r.name]=r; });
-  state.aiDiffIdx = {};
-  state.editTasks.forEach((t,i)=>{
-    const r = ruleByName[t.name];
-    if(r && (String(r.progress??'')!==String(t.progress??'') || (r.owner||'')!==(t.owner||'') || (r.status||'')!==(t.status||''))){
-      state.aiDiffIdx[i] = {rule:{progress:r.progress, owner:r.owner, status:r.status}};
-    }
-  });
-  box.style.display='block';
-  box.className='card';
-  const nDiff = Object.keys(state.aiDiffIdx).length;
-  box.innerHTML = `<div style="font-size:13px;font-weight:600;margin-bottom:8px;">任务校对（改完点「保存修改」；「偏慢豁免」=进度偏慢不标红；「关键」=人工标注关键路径任务；「权重」影响完成率）${nDiff?` <span style="color:var(--primary);font-weight:500">— ${nDiff} 处 AI 与规则解析不一致（行首标 AI）</span>`:''}</div>
-    <div style="overflow-x:auto;"><table id="editTaskTable">
-      <tr><th>任务名称</th><th>负责人</th><th>进度%</th><th>状态</th><th>计划开始</th><th>计划完成</th><th>依赖任务（选）</th><th>关键</th><th>权重</th><th>偏慢豁免</th><th>备注</th><th></th></tr>
-    </table></div>
-    <div class="row" style="margin-top:10px;">
-      <button class="btn btn-primary" onclick="saveTasks()">保存修改</button>
-      <button class="btn btn-outline" onclick="addTaskRow()">＋ 添加任务</button>
-      ${(state.ruleTasks||[]).length?`<button class="btn btn-outline" onclick="revertToRule()">↩ 还原为规则解析结果</button>`:''}
-      <button class="btn btn-danger" onclick="toggleEditTasks()">取消</button>
-      <span id="editMsg" style="font-size:12px;color:var(--muted)"></span>
-    </div>`;
-  const tb = $('editTaskTable');
-  state.editTasks.forEach((t,i)=>{ tb.insertAdjacentHTML('beforeend', editRowHtml(t,i)); });
-}
-function revertToRule(){
-  if(!(state.ruleTasks||[]).length){ alert('无规则解析快照（未使用 AI 提炼）'); return; }
-  if(!confirm('用规则解析结果替换当前编辑内容？（AI 建议将被放弃）')) return;
-  renderEditTable(state.ruleTasks, state.ruleTasks);
-  $('editMsg').textContent='已还原为规则解析结果';
-}
-function editRowHtml(t,i){
-  const diff = state.aiDiffIdx && state.aiDiffIdx[i];
-  const badge = diff ? `<span style="background:var(--primary);color:#fff;font-size:10px;border-radius:8px;padding:1px 6px;cursor:help;" title="AI 提炼与规则解析不一致｜规则值：进度=${diff.rule.progress} 负责人=${diff.rule.owner} 状态=${diff.rule.status}">AI改</span> ` : '';
-  return `<tr>
-    <td>${badge}<input style="width:130px" value="${esc(t.name)}" onchange="updTask(${i},'name',this.value)"></td>
-    <td><input style="width:90px" value="${esc(t.owner)}" onchange="updTask(${i},'owner',this.value)"></td>
-    <td><input type="number" min="0" max="150" style="width:70px" value="${t.progress==null?'':t.progress}" onchange="updTask(${i},'progress',this.value)"></td>
-    <td><select onchange="updTask(${i},'status',this.value)">
-      ${['','已完成','进行中','未开始','已滞后','有风险'].map(s=>`<option value="${s}" ${t.status===s?'selected':''}>${s||'（自动）'}</option>`).join('')}
-    </select></td>
-    <td><input type="date" value="${esc(t.plan_start||'')}" onchange="updTask(${i},'plan_start',this.value)"></td>
-    <td><input type="date" value="${esc(t.plan_end||'')}" onchange="updTask(${i},'plan_end',this.value)"></td>
-    <td><select style="width:130px" onchange="updTask(${i},'depends_on',this.value)" title="按 分组/项目 → 任务 选择">${depOptionsHtml(t.depends_on)}</select></td>
-    <td style="text-align:center"><input type="checkbox" ${t.critical?'checked':''} onchange="updTask(${i},'critical',this.checked)" title="人工标注：该任务是否关键路径任务（🔑）"></td>
-    <td><input type="number" min="0.1" step="0.5" style="width:60px" value="${t.weight}" onchange="updTask(${i},'weight',this.value)" title="影响完成率/平均进度"></td>
-    <td style="text-align:center"><input type="checkbox" ${t.slow_ok?'checked':''} onchange="updTask(${i},'slow_ok',this.checked)" title="勾选后该任务进度偏慢不再标红"></td>
-    <td><input style="width:120px" value="${esc(t.note)}" onchange="updTask(${i},'note',this.value)"></td>
-    <td><button class="btn btn-danger btn-sm" style="font-size:11px;padding:2px 8px" onclick="delTaskRow(${i})">✕</button></td>
-  </tr>`;
-}
-// 依赖任务三级选项：分组/待分组 → 项目(sheet) → 任务名
-function depOptionsHtml(cur){
-  const groups = state.groups||{};
-  const grouped = new Set(Object.values(groups).flatMap(g=>g.sheets||[]));
-  let html = '<option value="">（无依赖）</option>';
-  const pushSheet = (sid, prefix)=>{
-    const sh = state.sheet[sid]; if(!sh) return;
-    const names = (sh.tasks_full||[]).map(x=>x.name).filter(Boolean);
-    if(!names.length) return;
-    html += `<optgroup label="${prefix} → ${esc(sh.name)}">` +
-      names.map(n=>`<option value="${esc(n)}" ${cur===n?'selected':''}>${esc(n)}</option>`).join('') + '</optgroup>';
-  };
-  for(const gid in groups){ const g = groups[gid]; (g.sheets||[]).forEach(sid=>pushSheet(sid, '📁 '+g.name)); }
-  Object.keys(state.sheet).filter(sid=>!grouped.has(sid)).forEach(sid=>pushSheet(sid, '📥 待分组'));
-  return html;
-}
-function updTask(i,key,val){ state.editTasks[i][key]=val; }
-function addTaskRow(){
-  state.editTasks.push({name:'',owner:'',progress:null,status:'',plan_start:'',plan_end:'',actual_end:'',depends_on:'',slow_ok:false,critical:false,note:'',weight:1});
-  const tb = $('editTaskTable');
-  tb.insertAdjacentHTML('beforeend', editRowHtml(state.editTasks[state.editTasks.length-1], state.editTasks.length-1));
-}
-function delTaskRow(i){
-  const nm = (state.editTasks[i]||{}).name;
-  if(nm && !state.ignoredNames.includes(nm)) state.ignoredNames.push(nm);   // 记录待回写忽略词
-  state.editTasks.splice(i,1);
-  renderEditTable(state.editTasks);
-}
-async function saveTasks(){
-  const sid = currentSheetId(); if(!sid) return;
-  $('editMsg').textContent='保存中...';
-  const orig = (state.sheet[sid] && state.sheet[sid].tasks_full) || [];
-  // 状态词学习：原始状态是"非标准变体"且用户改成了标准状态 → 记录映射
-  const STD = ['已完成','进行中','未开始','已滞后','有风险'];
-  const statusLearn = {};
-  state.editTasks.forEach((t,i)=>{
-    const o = orig[i];
-    if(o && o.status && t.status && o.status!==t.status && !STD.includes(o.status) && STD.includes(t.status)){
-      statusLearn[o.status] = t.status;
-    }
-  });
-  const res = await fetch('/api/workspace/sheet/'+sid+'/tasks',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({tasks:state.editTasks})});
-  const d = await res.json();
-  if(!res.ok){ $('editMsg').textContent='保存失败：'+(d.detail||''); return; }
-  let msg = `已保存 ${d.n_tasks} 个任务并重新统计`;
-  // 校对回写：删除的任务名 → 忽略词；状态修正 → 状态词学习
-  const ignoreNames = state.ignoredNames.slice();
-  state.ignoredNames = [];
-  if(ignoreNames.length || Object.keys(statusLearn).length){
-    try{
-      const lr = await fetch('/api/rules/learn',{method:'POST',headers:{'Content-Type':'application/json'},
-        body:JSON.stringify({ignore_names:ignoreNames, status_maps:statusLearn})});
-      const ld = await lr.json();
-      const li = (ld.learned||{}).ignore||[], ls = (ld.learned||{}).status||[];
-      if(li.length || ls.length){
-        msg += `；已学习：忽略词 ${li.length} 条${ls.length?`、状态词 ${ls.length} 条`:''}（规则库越用越准，可在「📚 数据库中心 → 规则库」查看）`;
-      }
-    }catch(e){ /* 回写失败不阻塞 */ }
-  }
-  $('editMsg').textContent = msg;
-  await loadWorkspace();
-  selectSheet(sid);
-}
-// —— 🤖 AI 深度解析：规则结果 → AI 校验修正 → 校对页 diff 确认 ——
-async function aiReviewSheet(){
-  const sid = currentSheetId();
-  if(!sid){ alert('请先点击左侧选中一个 sheet'); return; }
-  $('editMsg') && ($('editMsg').textContent='AI 深度解析中…');
-  try{
-    const res = await fetch('/api/workspace/sheet/'+sid+'/ai-review',{method:'POST'});
-    const d = await res.json();
-    if(!res.ok || !d.ok){ alert('AI 深度解析失败：'+(d.detail||d.error||'未知错误')); return; }
-    // 写入 diff 快照并进入校对页（AI改 标注）
-    state.sheet[sid].rule_tasks = d.rule_tasks;
-    state.sheet[sid].tasks_full = d.tasks;
-    state.current = 'sheet:'+sid;
-    state.editMode = true;
-    $('viewTable').innerHTML=''; $('viewFilters').innerHTML='';
-    renderEditTable(d.tasks, d.rule_tasks);
-    $('editMsg').textContent = d.note||'AI 深度解析完成（请核对 AI改 后保存）';
-  }catch(e){ alert('AI 深度解析失败：'+e.message); }
-}
-// —— 🤖 Agent 一句话入口 ——
-async function runAgent(){
-  const instr = $('agentInput').value.trim();
-  if(!instr){ return; }
-  $('agentLog').textContent='执行中…';
-  try{
-    const res = await fetch('/api/agent/run',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({instruction:instr})});
-    const d = await res.json();
-    if(!res.ok){ $('agentLog').textContent='执行失败：'+(d.detail||''); return; }
-    $('agentLog').innerHTML = `意图：<b>${esc(d.intent)}</b>（${d.ai_used?'AI 识别':'规则回退'}） ｜ 执行：` +
-      (d.log||[]).map(l=>`${esc(l.step)}→${esc(l.tool)}`).join(' › ');
-    if(d.report){
-      $('agentResult').innerHTML = d.report;
-      $('agentResult').style.display='block';
-      state.lastReport = {report:d.report, project:d.project||'Agent', stats:null};
-    }
-  }catch(e){ $('agentLog').textContent='执行失败：'+e.message; }
-}
-async function exportTasks(){
-  const sid = currentSheetId();
-  let ids = sid ? sid : '';
-  if(!sid){
-    const cur = state.current;
-    if(cur && cur.startsWith('group:')){
-      const g = state.groups[cur.split(':')[1]];
-      if(g && g.sheets) ids = g.sheets.join(',');
-    }
-  }
-  const res = await fetch('/api/export/tasks',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({sheet_ids:ids})});
-  if(!res.ok){ alert('导出失败'); return; }
-  const blob = await res.blob();
-  const a = document.createElement('a'); const url = URL.createObjectURL(blob);
-  a.href=url; a.download='任务明细.csv'; a.click(); URL.revokeObjectURL(url);
-}
-function kpiHtml(v1,l1,v2,l2,v3,l3,v4,l4){
-  return `<div class="kpi"><div class="v">${v1}</div><div class="l">${l1}</div></div>
-          <div class="kpi"><div class="v">${v2}</div><div class="l">${l2}</div></div>
-          <div class="kpi"><div class="v">${v3}</div><div class="l">${l3}</div></div>
-          <div class="kpi"><div class="v">${v4}</div><div class="l">${l4}</div></div>`;
-}
-function renderKpisFromTasks(stats){
-  $('viewKpis').innerHTML = kpiHtml(stats.total,'总任务',stats.completion_rate+'%','完成率',stats.avg_progress+'%','平均实际',stats.risk||0,'风险项')
-    + (stats.avg_target_progress!=null?`<div class="kpi"><div class="v">${stats.avg_target_progress}%</div><div class="l">平均目标</div></div>`:'');
-}
-function renderTable(tasks, name){
-  // 筛选（状态用归一化 status_norm，与显示一致）
-  const col = state.sortBy, asc = state.sortAsc;
-  let f = state.filters[name] = state.filters[name]||{status:'',risk:'',owner:''};
-  let rows = tasks.filter(t=>{
-    const sn = t.status_norm || t.status || '';
-    if(f.status && sn!==f.status) return false;
-    if(f.risk && t.risk_level!==f.risk) return false;
-    if(f.owner && !(t.owner||'').includes(f.owner)) return false;
-    return true;
-  });
-  // 排序
-  if(col){
-    rows.sort((a,b)=>{
-      let x=0;
-      if(col==='progress') x=(a.progress||0)-(b.progress||0);
-      else if(col==='target') x=(a.target_progress||0)-(b.target_progress||0);
-      else x=String(a[col]||'').localeCompare(String(b[col]||''),'zh');
-      return asc?x:-x;
-    });
-  }
-  // 分页（每页 100 行）
-  const PAGE_SIZE = 100;
-  state.pages = state.pages || {};
-  let pg = state.pages[name] = state.pages[name]||{page:0};
-  const pages = Math.max(1, Math.ceil(rows.length/PAGE_SIZE));
-  if(pg.page >= pages) pg.page = pages-1;
-  const pageRows = rows.slice(pg.page*PAGE_SIZE, (pg.page+1)*PAGE_SIZE);
-  // 筛选控件
-  $('viewFilters').innerHTML = `
-    <select onchange="setFilter('${name}','status',this.value)">
-      <option value="">状态：全部</option>${['已完成','进行中','未开始','已滞后','有风险'].map(s=>`<option value="${s}" ${f.status===s?'selected':''}>${s}</option>`).join('')}
-    </select>
-    <select onchange="setFilter('${name}','risk',this.value)">
-      <option value="">风险：全部</option>${['正常','关注','风险'].map(s=>`<option value="${s}" ${f.risk===s?'selected':''}>${s}</option>`).join('')}
-    </select>
-    <input placeholder="负责人筛选" value="${esc(f.owner)}" onchange="setFilter('${name}','owner',this.value)">
-    <button class="btn btn-outline" style="font-size:12px;padding:4px 10px" onclick="resetFilters('${name}')">重置</button>
-    <span style="font-size:12px;color:var(--muted)">共 ${rows.length} 条${rows.length>PAGE_SIZE?`，第 ${pg.page+1}/${pages} 页` : ''}</span>
-    <span style="font-size:12px;color:var(--muted)">图例：<span class="pill" style="background:${riskColor('风险')}">风险</span> <span class="pill" style="background:${riskColor('关注')}">关注</span> 无色=正常，🔑=关键路径</span>
-    ${rows.length>PAGE_SIZE?`<button class="btn btn-outline" style="font-size:12px;padding:4px 10px" onclick="pageTable('${name}',${pg.page-1})" ${pg.page===0?'disabled':''}>‹ 上一页</button>
-    <button class="btn btn-outline" style="font-size:12px;padding:4px 10px" onclick="pageTable('${name}',${pg.page+1})" ${pg.page>=pages-1?'disabled':''}>下一页 ›</button>`:''}`;
-  // 表头（带排序）
-  const th=(label,key,cls)=>`<th onclick="doSort('${name}','${key}')">${label}${state.sortBy===key?(asc?' ▲':' ▼'):''}</th>`;
-  let h = `<table><tr><th>#</th>${th('任务名','name')}${th('负责人','owner')}${th('实际进度','progress')}${th('目标进度','target')}<th>状态</th><th>风险</th>${th('计划完成','plan_end')}<th>说明</th></tr>`;
-  if(!pageRows.length){
-    h += `<tr><td colspan="8" style="text-align:center;color:var(--muted);padding:24px;">无匹配任务（可调整筛选或点「重置」）</td></tr>`;
-  }
-  pageRows.forEach((t,i)=>{
-    const rc = riskColor(t.risk_level||'正常');
-    const rowStyle = t.risk_level==='风险'?`style="background:${tint(rc)}"`: (t.risk_level==='关注'?`style="background:${tint(rc,0.08)}"`:'');
-    const sn = t.status_norm || t.status || '-';
-    const tip = esc((t.note||t.risk_reason||''));
-    h += `<tr ${rowStyle} title="${tip}"><td>${pg.page*PAGE_SIZE+i+1}</td>
-      <td>${t.is_critical?'<span title="关键路径任务">🔑</span> ':''}${esc(t.name)}</td><td>${esc(t.owner)}</td>
-      <td>${t.progress!=null?t.progress+'%':'-'}</td>
-      <td>${t.target_progress!=null?'<b>'+t.target_progress+'%</b>':'-'}</td>
-      <td>${esc(sn)}</td>
-      <td><span class="pill" style="background:${rc}">${t.risk_level||'正常'}</span></td>
-      <td>${esc(t.plan_end||'-')}</td><td>${esc(t.risk_reason||'-')}</td></tr>`;
-  });
-  $('viewTable').innerHTML = h+'</table>';
-}
-function pageTable(name, page){
-  state.pages = state.pages || {};
-  state.pages[name] = state.pages[name]||{page:0};
-  state.pages[name].page = Math.max(0, page);
-  renderTableForCurrent();
-}
-function resetFilters(name){
-  state.filters[name] = {status:'',risk:'',owner:''};
-  state.pages = state.pages||{}; state.pages[name] = {page:0};
-  renderTableForCurrent();
-}
-function tint(hex, al){
-  const h=hex.replace('#',''); const r=parseInt(h.substr(0,2),16),g=parseInt(h.substr(2,2),16),b=parseInt(h.substr(4,2),16);
-  return `rgba(${r},${g},${b},${al==null?0.12:al})`;
-}
-function doSort(name,key){ if(state.sortBy===key){state.sortAsc=!state.sortAsc;}else{state.sortBy=key;state.sortAsc=true;} renderTableForCurrent(); }
-function setFilter(name,key,val){ state.filters[name]=state.filters[name]||{}; state.filters[name][key]=val; state.pages=state.pages||{}; state.pages[name]={page:0}; renderTableForCurrent(); }
-function renderTableForCurrent(){
-  const cur = state.current;
-  if(cur && cur.startsWith('sheet:')) renderSheetView(state.sheet[cur.split(':')[1]]);
-  else if(cur && cur.startsWith('group:')) renderGroupView(state.groups[cur.split(':')[1]]);
-}
 
 // ============ 模板 & 生成（一条线） ============
 let _tplPendingHtml = '';   // AI 解析出的待确认模板 HTML
@@ -1164,18 +652,6 @@ function setReportType(t){
   if(d){ d.className = t==='day' ? 'btn btn-primary' : 'btn btn-outline'; }
   loadGenTpls();
 }
-function currentHealth(){
-  const cur=state.current;
-  if(cur && cur.startsWith('sheet:')){
-    const sh=state.sheet[cur.split(':')[1]];
-    return sh && sh.stats ? sh.stats.health : null;
-  }
-  if(cur && cur.startsWith('group:')){
-    const g=state.groups[cur.split(':')[1]];
-    return g && g.summary ? g.summary.health : null;
-  }
-  return null;
-}
 async function generateReport(){
   const t0 = Date.now();
   const sid = $('genSourceSel') ? $('genSourceSel').value : '';
@@ -1200,6 +676,24 @@ async function generateReport(){
     $('genMsg').className='msg ok';
     $('genMsg').textContent = d.note + `（耗时 ${((Date.now()-t0)/1000).toFixed(1)}s）`;
   }catch(e){ $('genMsg').className='msg err'; $('genMsg').textContent='生成失败:'+e.message; }
+}
+// —— 🤖 Agent 一句话入口 ——
+async function runAgent(){
+  const instr = $('agentInput').value.trim();
+  if(!instr){ return; }
+  $('agentLog').textContent='执行中…';
+  try{
+    const res = await fetch('/api/agent/run',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({instruction:instr})});
+    const d = await res.json();
+    if(!res.ok){ $('agentLog').textContent='执行失败：'+(d.detail||''); return; }
+    $('agentLog').innerHTML = `意图：<b>${esc(d.intent)}</b>（${d.ai_used?'AI 识别':'规则回退'}） ｜ 执行：` +
+      (d.log||[]).map(l=>`${esc(l.step)}→${esc(l.tool)}`).join(' › ');
+    if(d.report){
+      $('agentResult').innerHTML = d.report;
+      $('agentResult').style.display='block';
+      state.lastReport = {report:d.report, project:d.project||'Agent', stats:null};
+    }
+  }catch(e){ $('agentLog').textContent='执行失败：'+e.message; }
 }
 async function exportReport(format){
   if(!state.lastReport){alert('请先生成周报');return;}
@@ -1314,10 +808,6 @@ document.querySelectorAll('.tab').forEach(t=>t.addEventListener('click',()=>{
 }));
 if(localStorage.getItem('pm_dark')==='1'){ document.body.classList.add('dark'); $('darkBtn').textContent='☀️'; }
 if(!localStorage.getItem('pm_onboard')){ $('onboard').style.display='block'; }
-// 点击页面其它处关闭「移入分组」菜单
-document.addEventListener('click', e=>{
-  if(!e.target.closest('#moveMenu') && !e.target.closest('.tree-item .ghost')) $('moveMenu').style.display='none';
-});
 loadWorkspace(); loadTemplate(); loadDashboard();
 </script>
 </body>
