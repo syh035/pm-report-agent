@@ -292,22 +292,15 @@ class ReportGenerator:
             "risk_truncated": len(risks) > 10,
             "tasks_truncated": len(inprog) > 10,
         }
-        prompt = (
-            "你是资深的 PMO 项目管理人员，负责撰写项目周报。以下是一个项目的结构性数据：\n"
-            f"{json.dumps(data, ensure_ascii=False)}\n\n"
-            "请输出两段纯文字（不要用任何 markdown 符号、不要用 # 或 * 或列表符号）：\n"
-            "第一段标题：进展综述 —— 3-5 句话的本周进展概述，结论先行，突出完成情况和推进节奏。\n"
-            "第二段标题：下周计划 —— 2-4 句，给出下周工作重点建议。\n"
-            "严格约束：文中出现的所有百分比和任务数字，只能来自上面给定的数据，禁止编造任何数字；"
-            "提到任务名只能用数据中的任务名。\n"
-            "用以下格式分隔两段：\n"
-            "[综述]...内容...\n[计划]...内容..."
-        )
+        # 提示词走可编辑面板（pmo_report/prompts.py + config/prompts.json）
+        from . import prompts as prompts_mod
+        entry = prompts_mod.get_prompt("report_overview")
+        prompt = prompts_mod.render_user(entry, {"stats_json": json.dumps(data, ensure_ascii=False)})
         try:
             text = ai_module.call_with_cache(
                 "report",
                 [
-                    {"role": "system", "content": "你是严谨、专业的 PMO 项目周报撰写专家，只输出纯文本，数字一律引用给定数据。"},
+                    {"role": "system", "content": entry.get("system", "")},
                     {"role": "user", "content": prompt},
                 ],
                 temperature=0.6,
@@ -548,7 +541,8 @@ class ReportGenerator:
         html_parts, text_parts = [], []
         # 数据自动绑定型模块（人工可勾选关闭：binding=false → 输出占位提示）
         DATA_BOUND_TYPES = {"kpi", "stats_table", "status", "risk_list", "delta",
-                            "transition", "project_table", "project_sections"}
+                            "transition", "project_table", "project_sections",
+                            "ai_block", "formula"}
         for block in blocks or []:
             typ = (block or {}).get("type", "")
             if typ in DATA_BOUND_TYPES and block.get("binding", True) is False:
@@ -823,6 +817,94 @@ def _block_project_sections(block, ctx, _gen):
     return "\n".join(html_parts), "\n\n".join(text_parts)
 
 
+# ---------- 自定义块：AI 提示词块（从{数据源}中{动作}）+ 公式计算块 ----------
+AI_SCOPE_OPTIONS = [
+    {"value": "stats_summary", "label": "汇总统计（完成率/风险/滞后等）"},
+    {"value": "risks", "label": "风险清单"},
+    {"value": "tasks_in_progress", "label": "进行中任务"},
+    {"value": "critical_tasks", "label": "关键任务"},
+    {"value": "projects", "label": "分项目对比"},
+    {"value": "delta", "label": "环比数据"},
+]
+
+
+def _ai_scope_data(scope: str, ctx: Dict) -> str:
+    """按数据源选项组装数据文本（确定性，AI 只做解读）。"""
+    stats = ctx["stats"]
+    if scope == "risks":
+        risks = [{"name": ts.task.name, "level": ts.risk_level, "reason": ts.risk_reason}
+                 for ts in stats.task_stats if ts.risk_level != "正常"]
+        return json.dumps(risks, ensure_ascii=False)
+    if scope == "tasks_in_progress":
+        t = [{"name": ts.task.name, "progress": ts.task.progress}
+             for ts in stats.task_stats if 0 < (ts.task.progress or 0) < 100]
+        return json.dumps(t, ensure_ascii=False)
+    if scope == "critical_tasks":
+        t = [ts.task.name for ts in stats.task_stats if ts.is_critical]
+        return json.dumps(t, ensure_ascii=False)
+    if scope == "projects":
+        return json.dumps(ctx.get("projects") or [], ensure_ascii=False)
+    if scope == "delta":
+        return json.dumps(ctx.get("delta_rows") or [], ensure_ascii=False)
+    base = {"project": stats.project.name, "period": stats.project.period,
+            "total": stats.total_tasks, "done": stats.done_count,
+            "in_progress": stats.in_progress_count, "not_started": stats.not_started_count,
+            "delayed": stats.delayed_count, "risk": stats.risk_count,
+            "completion_rate": stats.completion_rate, "avg_progress": stats.avg_progress,
+            "avg_target_progress": stats.avg_target_progress}
+    return json.dumps(base, ensure_ascii=False)
+
+
+def _block_ai(block, ctx, _gen):
+    """AI 提示词块：数据源下拉（避免输入偏差）+ 用户可写动作/句式；走缓存；失败显示提示。"""
+    scope = block.get("data_scope") or "stats_summary"
+    prompt_tpl = block.get("prompt") or "请从以下数据中总结 3 条管理层最该关注的事项，逐条列出：\n{data}"
+    data = _ai_scope_data(scope, ctx)
+    prompt = prompt_tpl.replace("{data}", str(data))
+    system = block.get("system") or "你是严谨的项目分析助手，只输出纯文本，必须引用数据中的事实，禁止编造数字。"
+    try:
+        from . import ai as ai_module
+        out = ai_module.call_with_cache(
+            "ai_block",
+            [{"role": "system", "content": system}, {"role": "user", "content": prompt}],
+            temperature=0.3, max_tokens=400,
+        )
+        return f"<p>{out}</p>", out
+    except Exception as e:
+        return f"<p style='color:var(--muted)'>（AI 块生成失败：{e}）</p>", ""
+
+
+def _eval_formula(expr: str, stats) -> Optional[float]:
+    """安全公式求值：只允许 数字/字段名/四则/括号/%。字段=统计值，无任何内置函数。"""
+    expr = (expr or "").strip()
+    if not expr:
+        return None
+    if not re.fullmatch(r"[0-9a-zA-Z_\.\(\)\+\-\*/%\s]+", expr):
+        raise ValueError("表达式含非法字符，仅允许 字段/数字/四则/括号")
+    env = {
+        "total": float(stats.total_tasks), "done": float(stats.done_count),
+        "in_progress": float(stats.in_progress_count), "not_started": float(stats.not_started_count),
+        "delayed": float(stats.delayed_count), "risk": float(stats.risk_count),
+        "completion_rate": float(stats.completion_rate), "avg_progress": float(stats.avg_progress),
+        "avg_target_progress": float(stats.avg_target_progress or 0),
+    }
+    val = eval(expr, {"__builtins__": {}}, env)
+    return float(val)
+
+
+def _block_formula(block, ctx, _gen):
+    """公式计算块：由统计数据计算出指标（安全求值），可输出百分比。"""
+    try:
+        val = _eval_formula(block.get("expression", ""), ctx["stats"])
+        if val is None:
+            return "", ""
+        label = block.get("label") or "指标"
+        txt = f"{val:.1f}%" if block.get("as_percent") else f"{val:.2f}"
+        return f"<p><b>{label}：</b>{txt}</p>", f"{label}：{txt}"
+    except Exception as e:
+        return f"<p style='color:var(--muted)'>（公式块错误：{e}）</p>", ""
+
+
 def _block_custom(block, ctx, _gen):
     content = block.get("content", "")
     is_html = block.get("is_html", False)
@@ -848,6 +930,8 @@ BLOCK_RENDERERS = {
     "transition": _block_transition,
     "project_table": _block_project_table,
     "project_sections": _block_project_sections,
+    "ai_block": _block_ai,
+    "formula": _block_formula,
     "custom": _block_custom,
 }
 

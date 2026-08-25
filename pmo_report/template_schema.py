@@ -42,6 +42,8 @@ MODULE_LIBRARY: List[Dict] = [
     {"type": "transition", "label": "过渡叙述", "desc": "跨版本一致的衔接段（纯规则、确定性）", "icon": "➡"},
     {"type": "project_table", "label": "重点项目表", "desc": "按项目对比 任务/完成率/风险/滞后", "icon": "▦"},
     {"type": "project_sections", "label": "分项目区块", "desc": "每个项目独立小节（KPI+风险）", "icon": "📦"},
+    {"type": "ai_block", "label": "自定义AI块", "desc": "提示词+数据源，AI 生成段落", "icon": "🧩"},
+    {"type": "formula", "label": "公式指标卡", "desc": "由统计数据计算指标（如 risk/total*100）", "icon": "ƒ"},
     {"type": "custom", "label": "自定义块", "desc": "自由 HTML/文本", "icon": "+"},
 ]
 

@@ -186,12 +186,15 @@ def _df_to_project(df: pd.DataFrame, custom_rules: Dict[str, str] | None = None)
     mapping = _map_columns(df, extra_aliases=extra_aliases)
     tasks: List[Task] = []
     ignored = 0
-    for _, row in df.iterrows():
+    for idx, row in df.iterrows():
         t = _row_to_task(row, mapping)
         if t.name:
             if any(kw in t.name for kw in ignore):   # 用户忽略词：任务名命中则跳过
                 ignored += 1
                 continue
+            # 原文对照：把该行的原始单元格拼成 source_line
+            vals = [str(v).strip() for v in row if str(v).strip()]
+            t.source_line = f"第{idx+1}行：" + " | ".join(vals)
             tasks.append(t)
     proj = Project(tasks=tasks)
     proj.parse_stats = {"rule_hits": len(tasks), "ambiguous": 0, "ignored": ignored, "ai_used": False}

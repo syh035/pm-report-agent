@@ -280,13 +280,8 @@ def analyze(project: Project, today: date | None = None, rules: Dict | None = No
         ts = _eval_task(t, today, rules)
         prog = t.progress or 0.0
         prog_sum += prog
-        status = ts.task.status or ""
-        # 用归一化后的状态计数
-        st_norm = ts.task.status = ts.task.status or ""
-        if t.progress is not None and t.progress >= 100:
-            status = STATUS_DONE
-        else:
-            status = st_norm
+        # 用归一化后的状态计数（修复：此前误用原始 task.status 导致"进度0未开始"被计为进行中）
+        status = ts.status_norm or ""
         if status == STATUS_DONE:
             stats.done_count += 1
         elif status == STATUS_IN_PROGRESS:

@@ -123,7 +123,7 @@ def _rule_parse(text: str, ignore: List[str] | None = None) -> tuple:
     ambiguous: List[str] = []
     seen = set()
 
-    for raw_line in text.splitlines():
+    for lineno, raw_line in enumerate(text.splitlines(), 1):
         line = raw_line.strip()
         if not line:
             continue
@@ -153,6 +153,7 @@ def _rule_parse(text: str, ignore: List[str] | None = None) -> tuple:
             seen.add(name)
 
             t = Task(name=name, owner=owner, note=line)
+            t.source_line = f"行{lineno}：{line}"   # 原文对照
             if m_pct:
                 t.progress = min(int(m_pct.group(1)), 100)
                 if t.progress >= 100:

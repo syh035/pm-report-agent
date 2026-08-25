@@ -319,18 +319,13 @@ def enrich_tasks_from_text(text: str, fallback_tasks: List[Task], max_chars: int
     if not text or not text.strip():
         return fallback_tasks
     try:
-        prompt = (
-            "你是项目管理助手。下面是已用规则初步筛选出的项目进度候选行，请从中提炼任务/进度条目。\n"
-            "要求：输出 JSON 数组，每个元素含 name(任务名)、owner(负责人，可空)、"
-            "progress(进度0-100，可空)、status(可选：已完成/进行中/未开始/已滞后/有风险)、"
-            "plan_end(计划完成日期字符串，可空)、note(备注，可空)。\n"
-            "只输出 JSON 数组，不要其他文字，不要编造候选行中不存在的信息。\n\n"
-            f"候选行：\n{text[:max_chars]}"
-        )
+        from . import prompts as prompts_mod
+        entry = prompts_mod.get_prompt("enrich_tasks")
+        prompt = prompts_mod.render_user(entry, {"candidate_text": text[:max_chars]})
         out = call_with_cache(
             "enrich",
             [
-                {"role": "system", "content": "你是高效的项目管理数据提炼助手，只输出 JSON。"},
+                {"role": "system", "content": entry.get("system", "")},
                 {"role": "user", "content": prompt},
             ],
             temperature=0.3,
@@ -393,23 +388,14 @@ def parse_template_to_html(text: str) -> str:
     失败时抛异常，由调用方处理。
     """
     placeholders_hint = "、".join(TEMPLATE_PLACEHOLDERS)
-    prompt = (
-        "你是资深的技术文档 / 周报排版专家。下面是用户提供的一份项目周报模板（可能是 "
-        "Word/PDF 抽取的文本、HTML 或 markdown 原文）。\n"
-        "请把它转换成一份 **结构化的 HTML 周报模板**，要求：\n"
-        "1. 使用标准 HTML 标签（h1/h2/p/table/ul/li/strong），不要使用任何 markdown "
-        "符号（不用 #、*、>、- 等）。\n"
-        f"2. 保留以下占位符原样（放在合适位置，可重复使用）：{placeholders_hint}\n"
-        "   其中 {stats_html} 放核心数据表格、{risks_html} 放风险列表、{overview} 放"
-        "综述、{status_html} 放完成情况、{next_plan} 放下周计划。\n"
-        "3. 大致保留用户原文的章节标题和顺序，但用语义化 HTML 表达。\n"
-        "4. 只输出 HTML 模板本身，不要包裹代码块、不要解释。\n\n"
-        f"原文：\n{text[:6000]}"
-    )
+    from . import prompts as prompts_mod
+    entry = prompts_mod.get_prompt("template_parse")
+    prompt = prompts_mod.render_user(entry, {"placeholders": placeholders_hint,
+                                             "source_text": text[:6000]})
     out = call_with_cache(
         "template",
         [
-            {"role": "system", "content": "你是 HTML 排版专家，只输出干净、无 markdown 的 HTML。"},
+            {"role": "system", "content": entry.get("system", "")},
             {"role": "user", "content": prompt},
         ],
         temperature=0.3,

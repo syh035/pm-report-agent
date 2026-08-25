@@ -27,6 +27,13 @@
   .tree-item .ghost { margin-left:auto; opacity:0; transition:.15s; }
   .tree-item:hover .ghost { opacity:.6; }
   .tree-item .ghost:hover { opacity:1; }
+  .tree-item.batch-sel { background:#E3E9FF; }
+  body.dark .tree-item.batch-sel{background:#2A2D3A;}
+  .batch-check { width:14px; height:14px; accent-color:var(--primary); cursor:pointer; flex:none; }
+  #batchBar { display:none; background:var(--primary); color:#fff; border-radius:8px; padding:8px 10px; margin-bottom:8px; font-size:12px; line-height:1.8; }
+  #batchBar .bb-btn { background:rgba(255,255,255,.18); border:none; color:#fff; border-radius:6px; padding:2px 9px; font-size:12px; cursor:pointer; margin-right:6px; }
+  #batchBar .bb-btn:hover { background:rgba(255,255,255,.32); }
+  #batchBar select { background:#fff; color:#333; border:none; border-radius:6px; padding:2px 6px; font-size:12px; }
   .side-btn { width:100%; margin-top:8px; padding:8px; border:1px dashed var(--border); border-radius:6px; background:transparent; color:var(--muted); cursor:pointer; font-size:12px; }
   .side-btn:hover { border-color:var(--primary); color:var(--primary); }
   .group-head { display:flex; align-items:center; gap:6px; padding:4px 8px; font-size:13px; font-weight:600; border-radius:6px; cursor:pointer; }
@@ -107,20 +114,66 @@
 <div class="layout">
   <!-- 左侧边栏 -->
   <div class="sidebar">
-    <div class="side-title">工作区</div>
+    <div class="side-title">工作区
+      <span style="float:right;font-weight:400;text-transform:none;letter-spacing:0">
+        <button class="side-btn" style="display:inline-block;width:auto;margin:0;padding:1px 8px;border-style:solid" id="batchToggle" onclick="toggleBatch()">☑ 批量</button>
+      </span>
+    </div>
+    <div id="batchBar">
+      <b id="batchCount">已选 0 个</b> ·
+      <button class="bb-btn" onclick="batchAll(true)">全选</button>
+      <button class="bb-btn" onclick="batchAll(false)">清空</button><br>
+      <select id="batchGroupSel" onchange="batchMove(this.value)"><option value="">移入分组…</option></select>
+      <button class="bb-btn" onclick="batchUngroup()">移出分组</button>
+      <button class="bb-btn" style="background:rgba(200,60,50,.55)" onclick="batchDelete()">🗑 删除</button>
+    </div>
     <div id="workspaceTree"></div>
     <button class="side-btn" onclick="createGroup()">＋ 新建分组</button>
-    <div style="font-size:11px;color:var(--muted);padding:6px 8px;line-height:1.6;">💡 上传资料用右上角按钮；sheet 可拖入分组或点 📁 移入</div>
+    <div class="side-title" style="margin-top:10px;">📦 源数据 <span id="srcBadge" style="opacity:.6"></span></div>
+    <div id="sourceList" style="font-size:12px;color:var(--muted);padding:2px 8px;">（加载中…）</div>
+    <div style="font-size:11px;color:var(--muted);padding:6px 8px;line-height:1.6;">💡 上传资料用右上角按钮；sheet 可拖入分组或点 📁 移入；源文件永久保留可下载</div>
   </div>
 
   <!-- 主区域 -->
   <div class="main">
     <div class="tabs">
       <div class="tab active" data-tab="data">数据</div>
+      <div class="tab" data-tab="dashboard">看板</div>
       <div class="tab" data-tab="rules">规则配置</div>
       <div class="tab" data-tab="template">模板</div>
       <div class="tab" data-tab="report">周报 / 历史</div>
       <div class="tab" data-tab="settings">设置</div>
+    </div>
+
+    <!-- 看板面板 -->
+    <div class="panel" id="panel-dashboard">
+      <div class="card" style="margin-bottom:14px;">
+        <div class="row" style="gap:8px;flex-wrap:wrap;">
+          <span style="font-size:13px;font-weight:600;">🤖 Agent 一句话指令</span>
+          <input id="agentInput" placeholder="如：生成周报；列出风险；看板概览；生成日报 项目：支付项目" style="flex:1;min-width:220px" onkeydown="if(event.key==='Enter')runAgent()">
+          <button class="btn btn-primary" onclick="runAgent()">执行</button>
+        </div>
+        <div id="agentLog" style="font-size:11px;color:var(--muted);margin-top:6px;"></div>
+        <div id="agentResult" class="report-content" style="display:none;margin-top:8px;"></div>
+      </div>
+      <div class="card" style="margin-bottom:14px;">
+        <div class="row" style="gap:10px;flex-wrap:wrap;">
+          <span style="font-size:13px;font-weight:600;margin-right:4px;">看板</span>
+          <div style="display:flex;gap:4px;">
+            <button class="btn btn-primary" id="dashViewAll" style="font-size:12px;padding:5px 12px" onclick="setDashView('all')">全部</button>
+            <button class="btn btn-outline" id="dashViewGroups" style="font-size:12px;padding:5px 12px" onclick="setDashView('groups')">按分组</button>
+          </div>
+          <span style="width:1px;height:22px;background:var(--border);"></span>
+          <div style="display:flex;gap:4px;">
+            <button class="btn btn-primary" id="dashPer4" style="font-size:12px;padding:5px 12px" onclick="setDashPer('recent4')">近4期</button>
+            <button class="btn btn-outline" id="dashPer12" style="font-size:12px;padding:5px 12px" onclick="setDashPer('recent12')">近12期</button>
+            <button class="btn btn-outline" id="dashPerAll" style="font-size:12px;padding:5px 12px" onclick="setDashPer('all')">全部</button>
+          </div>
+          <span id="dashMeta" style="font-size:12px;color:var(--muted);margin-left:auto;"></span>
+        </div>
+      </div>
+      <div id="dashGlobal"></div>
+      <div id="dashGroups"></div>
     </div>
 
     <!-- 数据面板 -->
@@ -129,6 +182,7 @@
         <h2 id="viewTitle"></h2>
         <div class="row" style="margin-bottom:10px;">
           <button class="btn btn-outline" onclick="toggleEditTasks()">✏ 编辑任务（校对）</button>
+          <button class="btn btn-outline" onclick="aiReviewSheet()">🤖 AI 深度解析</button>
           <button class="btn btn-outline" onclick="exportTasks()">导出明细 CSV</button>
           <span id="healthBadge" style="font-size:12px;color:var(--muted);"></span>
           <span id="parseReport" style="font-size:12px;color:var(--muted);"></span>
@@ -181,6 +235,7 @@
           <select id="presetSelect" style="padding:7px 8px;border:1px solid var(--border);border-radius:6px;font-size:13px;"></select>
           <button class="btn btn-outline" onclick="loadPreset()">载入预置模板</button>
           <button class="btn btn-primary" onclick="previewTemplate()">▶ 实时预览</button>
+          <button class="btn btn-outline" onclick="showCustomBlocks()">🧩 自定义块库</button>
           <button class="btn btn-danger" onclick="resetTemplate()">恢复默认并清空</button>
           <button class="btn btn-primary" onclick="saveTemplateBlocks()">保存模板</button>
         </div>
@@ -208,12 +263,16 @@
         <div id="trendMsg" style="font-size:12px;color:var(--muted);"></div>
       </div>
       <div class="card">
-        <h2>生成周报</h2>
+        <h2>生成文稿</h2>
         <div class="row">
-          <input type="text" id="genProject" placeholder="项目名称（可选）" style="width:200px">
-          <input type="text" id="genPeriod" placeholder="周期，如 2026-W33" style="width:150px">
+          <div style="display:flex;gap:4px;">
+            <button class="btn btn-primary" id="rtWeek" onclick="setReportType('week')">📅 周报</button>
+            <button class="btn btn-outline" id="rtDay" onclick="setReportType('day')">📆 日报</button>
+          </div>
+          <input type="text" id="genProject" placeholder="项目名称（可选）" style="width:180px">
+          <input type="text" id="genPeriod" placeholder="周期，如 2026-W33" style="width:140px">
           <label style="font-size:13px;display:flex;gap:4px;align-items:center;"><input type="checkbox" id="genUseAI" checked>AI增强</label>
-          <button class="btn btn-primary" onclick="generateReport()">生成周报</button>
+          <button class="btn btn-primary" onclick="generateReport()">生成</button>
         </div>
         <div class="msg" id="genMsg"></div>
         <div id="reportBox" class="report-content" style="margin-top:14px;min-height:200px;"></div>
@@ -224,8 +283,35 @@
           <button class="btn btn-outline" onclick="saveToHistory()">存入历史</button>
         </div>
       </div>
+      <div class="card" style="border-color:var(--primary);">
+        <h2>📋 模板 + 数据集生成（严格按模板抓数）</h2>
+        <p style="font-size:12px;color:var(--muted);margin-bottom:10px;">
+          上传周报模板文档（Word/PDF/HTML/txt）＋ 选择多 sheet 数据集（Excel）→ AI 严格按模板章节结构，
+          从数据集各板块抓取真实数据生成周报。数据集板块可在「📦 源数据」详情中预览。
+        </p>
+        <div class="row" style="gap:8px;flex-wrap:wrap;align-items:center;">
+          <select id="dsSourceSel" style="min-width:220px" onchange="dsSourceChanged()">
+            <option value="">选择数据集源文件…</option>
+          </select>
+          <input type="file" id="dsTemplateFile" accept=".docx,.pdf,.html,.htm,.txt" style="font-size:12px;max-width:260px">
+          <button class="btn btn-outline" style="font-size:12px;padding:4px 10px" onclick="dsExtractTemplate()">载入模板</button>
+          <button class="btn btn-primary" onclick="dsGenerateReport()">🚀 按模板生成周报</button>
+        </div>
+        <div class="hint" style="margin-top:6px;" id="dsTemplateHint"></div>
+        <div class="msg" id="dsMsg"></div>
+        <div id="dsReportBox" class="report-content" style="margin-top:10px;min-height:120px;"></div>
+      </div>
       <div class="card">
-        <h2>历史周报</h2>
+        <h2>文稿库（历史）</h2>
+        <div class="row" style="margin-bottom:8px;gap:8px;">
+          <div style="display:flex;gap:4px;">
+            <button class="btn btn-primary" id="histTypeAll" style="font-size:12px;padding:4px 10px" onclick="setHistType('')">全部</button>
+            <button class="btn btn-outline" id="histTypeWeek" style="font-size:12px;padding:4px 10px" onclick="setHistType('week')">📅 周报</button>
+            <button class="btn btn-outline" id="histTypeDay" style="font-size:12px;padding:4px 10px" onclick="setHistType('day')">📆 日报</button>
+          </div>
+          <input id="histSearch" placeholder="搜索文稿…" style="flex:1;min-width:140px;font-size:12px" oninput="loadHistory()">
+          <button class="btn btn-primary" id="summarizeBtn" style="font-size:12px;padding:4px 10px" onclick="summarizeSelected()">汇总选中(0)</button>
+        </div>
         <ul class="history-list" id="historyList"></ul>
       </div>
     </div>
@@ -280,6 +366,19 @@
         </div>
       </div>
       <div class="card">
+        <h2>AI 提示词（可编辑调试）</h2>
+        <p style="font-size:12px;color:var(--muted);margin-bottom:10px;">
+          修改保存后，生成/提炼/模板解析立即生效（仅本地 config/prompts.json）。
+          User 模板里的 <code>{stats_json}</code> 等占位符由系统填充；「示例」区可贴您期望的输出样稿（多个用 <code>---</code> 分隔），AI 会模仿其风格——比如您想让综述写成"本周完成 X 项，待完成 Y 项，卡点在于…"，把样稿贴进综述的示例即可。
+        </p>
+        <div id="promptList"></div>
+        <div class="row" style="margin-top:10px;">
+          <button class="btn btn-primary" onclick="saveAllPrompts()">保存全部修改</button>
+          <button class="btn btn-danger" onclick="resetAllPrompts()">恢复全部默认</button>
+          <span id="promptMsg" style="font-size:12px;color:var(--muted)"></span>
+        </div>
+      </div>
+      <div class="card">
         <h2>AI Token 用量（省钱看这里）</h2>
         <p style="font-size:12px;color:var(--muted);margin-bottom:12px;">
           所有 AI 结果都有本地缓存：相同数据不会重复付费。以下统计来自本机记录（约 ¥0.001/千输入 token、¥0.002/千输出 token 估算）。
@@ -298,11 +397,35 @@
 </div>
 
 <div id="moveMenu" style="display:none;position:fixed;background:var(--card);border:1px solid var(--border);border-radius:6px;box-shadow:0 4px 14px rgba(0,0,0,.15);z-index:99;min-width:170px;padding:5px;"></div>
+<div id="dupModal" style="display:none;position:fixed;left:0;top:0;right:0;bottom:0;background:rgba(0,0,0,.35);z-index:100;overflow:auto;">
+  <div style="background:var(--card);max-width:460px;margin:120px auto;border-radius:10px;padding:18px;">
+    <h3 style="margin:0 0 8px;">⚠️ 检测到同名文件</h3>
+    <div id="dupInfo" style="font-size:13px;color:var(--muted);margin-bottom:14px;"></div>
+    <div style="display:flex;gap:8px;justify-content:flex-end;">
+      <button class="btn btn-primary" id="dupOverwrite">🔄 覆盖旧文件</button>
+      <button class="btn btn-outline" id="dupRename">✏️ 改名上传</button>
+      <button class="btn btn-danger" id="dupCancel">取消</button>
+    </div>
+  </div>
+</div>
 <div id="phModal" style="display:none;position:fixed;right:16px;top:70px;width:340px;max-height:70vh;overflow-y:auto;background:var(--card);border:1px solid var(--border);border-radius:8px;box-shadow:0 6px 20px rgba(0,0,0,.2);z-index:98;padding:12px;"></div>
+<div id="srcModal" style="display:none;position:fixed;left:0;top:0;right:0;bottom:0;background:rgba(0,0,0,.35);z-index:97;overflow:auto;">
+  <div style="background:var(--card);max-width:900px;margin:40px auto;border-radius:10px;padding:16px;max-height:85vh;overflow-y:auto;">
+    <div id="srcModalBody"></div>
+  </div>
+</div>
+<div id="cbModal" style="display:none;position:fixed;left:0;top:0;right:0;bottom:0;background:rgba(0,0,0,.35);z-index:96;overflow:auto;">
+  <div style="background:var(--card);max-width:600px;margin:60px auto;border-radius:10px;padding:16px;max-height:85vh;overflow-y:auto;">
+    <div id="cbModalBody"></div>
+  </div>
+</div>
 <input type="file" id="uploadInput" multiple style="display:none" accept=".xlsx,.xlsm,.csv,.docx,.pdf">
 <script>
 const $ = id => document.getElementById(id);
-let state = { sheet:{}, groups:{}, rules:{}, current:'', lastReport:null, sortBy:'', sortAsc:true, filters:{}, editMode:false, editTasks:[], ignoredNames:[] };
+let state = { sheet:{}, groups:{}, rules:{}, current:'', lastReport:null, sortBy:'', sortAsc:true, filters:{}, editMode:false, editTasks:[], ignoredNames:[], batchMode:false, batchSel:{} };
+let genReportType = 'week';   // 文稿类型：week 周报 / day 日报
+let histType = '';            // 文稿库类型筛选
+let histSel = {};             // 文稿库多选集合
 
 // ============ 工具 ============
 function esc(s){ s=s==null?'':String(s); return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
@@ -320,8 +443,27 @@ $('dropzone').addEventListener('drop', e=>uploadFiles(e.dataTransfer.files));
 
 async function uploadFiles(files){
   if(!files.length) return;
+  // 重名检测：同名文件已存在 → 弹窗让用户选 覆盖 / 改名上传 / 取消
+  const names = [...files].map(f=>f.name);
+  let mode = '';   // '' = 正常 | overwrite | rename
+  try{
+    const dupRes = await fetch('/api/sources/duplicate-check?name='+encodeURIComponent(names[0]));
+    const dup = await dupRes.json();
+    if(dup && dup.duplicate){
+      mode = await new Promise(res=>{
+        const m = $('dupModal');
+        $('dupInfo').textContent = `「${names[0]}」已存在（上次上传 ${dup.items?.[0]?.uploaded_at||'?'}，共 ${dup.count} 份同名）`;
+        m.style.display='block';
+        $('dupOverwrite').onclick = ()=>{ m.style.display='none'; res('overwrite'); };
+        $('dupRename').onclick   = ()=>{ m.style.display='none'; res('rename'); };
+        $('dupCancel').onclick   = ()=>{ m.style.display='none'; res('cancel'); };
+      });
+      if(mode === 'cancel') return;
+    }
+  }catch(e){ /* 检测失败不阻塞上传 */ }
   let fd = new FormData();
   for(const f of files) fd.append('files', f);
+  if(mode === 'overwrite') fd.append('overwrite', 'true');
   const res = await fetch('/api/workspace/load',{method:'POST',body:fd});
   const d = await res.json();
   if(!res.ok){ alert('解析失败: '+JSON.stringify(d)); return; }
@@ -341,7 +483,7 @@ async function loadWorkspace(){
     html += `<div><div class="group-head" onclick="selectGroup('${gid}')"
         ondragover="event.preventDefault();this.style.background='#E3E9FF'"
         ondragleave="this.style.background=''"
-        ondrop="event.preventDefault();this.style.background='';sheetDrop(event,'${gid}')">📁 ${esc(g.name||'分组')} <span style="font-size:11px;opacity:.7">(${g.sheets.length})</span>
+        ondrop="event.preventDefault();this.style.background='';sheetDrop(event,'${gid}')">${batchCheckAll(gid)}📁 ${esc(g.name||'分组')} <span style="font-size:11px;opacity:.7">(${g.sheets.length})</span>
       <span class="ghost" style="margin-left:auto" onclick="event.stopPropagation();delGroup('${gid}')">🗑</span></div><div class="child">${empty}`;
     g.sheets.forEach(sid=>{ html += itemHtml(sid, state.sheet[sid]); });
     html += `</div></div>`;
@@ -356,11 +498,22 @@ async function loadWorkspace(){
     html += `</div></div>`;
   }
   $('workspaceTree').innerHTML = html || '<div style="font-size:12px;color:var(--muted);padding:8px">（空，请上传资料）</div>';
+  updateBatchBar();
+  loadSourceList();   // 刷新源数据区（新上传的文件会出现在这里）
+}
+function batchCheckAll(gid){
+  if(!state.batchMode) return '';
+  const g = state.groups[gid]||{};
+  const all = (g.sheets||[]).filter(sid=>state.sheet[sid]);
+  const checked = all.length && all.every(sid=>state.batchSel[sid]);
+  return `<input type="checkbox" class="batch-check" ${checked?'checked':''} title="全选该分组"
+    onclick="event.stopPropagation();toggleGroupSel('${gid}')">`;
 }
 function itemHtml(sid, sh){
   if(!sh) return '';
-  return `<div class="tree-item ${state.current===sid?'active':''}" onclick="selectSheet('${sid}')"
-      draggable="true" ondragstart="sheetDrag(event,'${sid}')">🧾 ${esc(sh.name)}
+  const sel = state.batchMode && state.batchSel[sid];
+  return `<div class="tree-item ${sel?'batch-sel':''} ${state.current===sid?'active':''}" onclick="selectSheet('${sid}')"
+      draggable="true" ondragstart="sheetDrag(event,'${sid}')">${state.batchMode?`<input type="checkbox" class="batch-check" data-sid="${sid}" ${sel?'checked':''} onclick="event.stopPropagation();toggleSel('${sid}')">`:''}🧾 ${esc(sh.name)}
     <span class="ghost" onclick="event.stopPropagation();showMoveMenu('${sid}',event)" title="移入/移出分组">📁</span>
     <span class="ghost" onclick="event.stopPropagation();renameSheet('${sid}')">✏</span>
     <span class="ghost" onclick="event.stopPropagation();delSheet('${sid}')">🗑</span></div>`;
@@ -370,6 +523,115 @@ function sheetDrag(ev, sid){ ev.dataTransfer.setData('text/sheet-id', sid); }
 function sheetDrop(ev, gid){
   const sid = ev.dataTransfer.getData('text/sheet-id');
   if(sid) moveToGroup(sid, gid);
+}
+// —— 📦 源数据（原始文件保留 + 行级对照） ——
+async function loadSourceList(){
+  try{
+    const d = await (await fetch('/api/sources')).json();
+    const items = d.items||[];
+    $('srcBadge').textContent = `(${items.length})`;
+    $('sourceList').innerHTML = items.length ? items.map(s=>
+      `<div style="display:flex;align-items:center;gap:4px;padding:3px 2px;font-size:12px;cursor:pointer;border-radius:4px;" onmouseover="this.style.background='#EEF2FF'" onmouseout="this.style.background=''" onclick="viewSource('${s.id}')">
+        <span title="${esc(s.filename)}">${s.has_dataset?'🗂':'📄'} ${esc(s.filename.length>14?s.filename.slice(0,14)+'…':s.filename)}</span>
+        <span style="margin-left:auto;font-size:10px;color:var(--muted)">${esc(s.uploaded_at.slice(5,16))}</span>
+        <span style="font-size:10px;color:var(--muted)">${s.n_sheets||0}表</span>
+      </div>`).join('') : '<div style="font-size:12px;color:var(--muted)">（暂无，上传后自动保留）</div>';
+    fillDsSourceSel(items);
+  }catch(e){ $('sourceList').textContent='源数据加载失败'; }
+}
+function fillDsSourceSel(items){
+  const sel = $('dsSourceSel'); if(!sel) return;
+  const cur = sel.value;
+  sel.innerHTML = '<option value="">选择数据集源文件…</option>' + (items||[]).map(s=>
+    `<option value="${s.id}">${s.has_dataset?'🗂 ':''}${esc(s.filename)}</option>`).join('');
+  if(cur && items.some(s=>s.id===cur)) sel.value = cur;
+}
+async function dsExtractTemplate(){
+  const f = $('dsTemplateFile').files[0];
+  if(!f){ alert('请先选择模板文件（Word/PDF/HTML/txt）'); return; }
+  let fd = new FormData(); fd.append('file', f);
+  const res = await fetch('/api/dataset/template-extract',{method:'POST',body:fd});
+  const d = await res.json();
+  if(!res.ok){ alert('模板提取失败: '+JSON.stringify(d)); return; }
+  window._dsTemplateText = d.text||'';
+  $('dsTemplateHint').textContent = `✅ 已载入模板「${d.filename||''}」（${(d.text||'').length} 字）`;
+}
+async function dsGenerateReport(){
+  const sid = $('dsSourceSel').value;
+  if(!sid){ alert('请先选择数据集源文件'); return; }
+  if(!window._dsTemplateText){ alert('请先上传并载入周报模板文档'); return; }
+  $('dsMsg').textContent = '⏳ AI 正在按模板从数据集抓数生成…';
+  $('dsReportBox').innerHTML = '';
+  try{
+    const res = await fetch('/api/dataset/report',{method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({source_id:sid, template_text:window._dsTemplateText})});
+    const d = await res.json();
+    if(!res.ok){ $('dsMsg').textContent = '生成失败: '+(d.detail||JSON.stringify(d)); return; }
+    $('dsMsg').textContent = `✅ 已按模板生成（板块 ${(d.sections||[]).join('、')}）`;
+    $('dsReportBox').innerHTML = d.html||'';
+    if(d.metrics && d.metrics.length){
+      const ms = d.metrics.map(m=>Object.entries(m).map(([k,v])=>`${esc(k)}=${esc(v)}`).join('；')).join('<br>');
+      $('dsMsg').innerHTML += `<div style="font-size:11px;color:var(--muted);margin-top:6px;">🧮 数据集关键指标（供核对，AI 生成仅供参考）:<br>${ms}</div>`;
+    }
+  }catch(e){ $('dsMsg').textContent = '生成异常: '+e; }
+}
+async function viewSource(sid){
+  const d = await (await fetch('/api/sources/'+sid)).json();
+  const src = d.source||{};
+  let html = `<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;">
+      <b>📄 ${esc(src.filename||'')} <span style="font-size:11px;color:var(--muted)">（上传 ${esc(src.uploaded_at||'')}）</span></b>
+      <span><button class="btn btn-primary" style="font-size:12px;padding:4px 10px" onclick="downloadSource('${sid}')">⬇ 下载原文</button>
+      <button class="btn btn-danger btn-sm" onclick="$('srcModal').style.display='none'">关闭</button></span></div>`;
+  const sheets = d.sheets||[];
+  if(sheets.length){
+    html += sheets.map(sh=>{
+      const rows = (sh.tasks||[]).map(t=>
+        `<tr><td style="border:1px solid var(--border);padding:5px 8px;font-size:12px;color:var(--muted);">${esc(t.source_line||'-')}</td>
+         <td style="border:1px solid var(--border);padding:5px 8px;font-size:12px;">${esc(t.name)}${t.owner?'（'+esc(t.owner)+'）':''}</td>
+         <td style="border:1px solid var(--border);padding:5px 8px;font-size:12px;text-align:right;">${t.progress!=null?t.progress+'%':'-'}</td>
+         <td style="border:1px solid var(--border);padding:5px 8px;font-size:12px;">${esc(t.status_norm||t.status||'')}</td></tr>`).join('');
+      const ps = sh.parse_stats||{};
+      return `<h3 style="font-size:13px;margin:10px 0 6px;">🧾 ${esc(sh.name)} —— 原文 ↔ 解析对照（解析 ${ps.rule_hits||0} 条｜忽略 ${ps.ignored||0} 条｜模糊 ${ps.ambiguous||0} 条）</h3>
+        <table style="width:100%;border-collapse:collapse;"><tr><th style="border:1px solid var(--border);padding:5px 8px;font-size:11px;text-align:left;">原文行（source_line）</th><th style="border:1px solid var(--border);padding:5px 8px;font-size:11px;text-align:left;">解析任务</th><th style="border:1px solid var(--border);padding:5px 8px;font-size:11px;">进度</th><th style="border:1px solid var(--border);padding:5px 8px;font-size:11px;">状态</th></tr>${rows||'<tr><td colspan="4" style="padding:10px;color:var(--muted);font-size:12px;">无任务（全部被忽略或未识别）</td></tr>'}</table>`;
+    }).join('');
+  } else {
+    html += '<div style="font-size:12px;color:var(--muted);margin:8px 0;">当前工作区无关联 sheet（文件已归档，可下载查看原文）</div>';
+  }
+  const raw = d.raw_rows && d.raw_rows.length ? d.raw_rows.slice(0,30).map(r=>esc(r.join(' | '))).join('\n')
+              : esc((d.text||'').slice(0,1500));
+  html += `<h3 style="font-size:13px;margin:12px 0 6px;">📄 原文预览（前 30 行/1500 字）</h3><pre style="background:var(--bg);border:1px solid var(--border);border-radius:6px;padding:10px;font-size:11px;max-height:240px;overflow:auto;">${raw||'（无文本内容）'}</pre>`;
+  // 数据集板块（多 sheet 周报数据集：指标/里程碑/风险/依赖/资源/预算/计划/RFA/附录，保留完整字段）
+  const ds = d.dataset_sections||[];
+  if(ds.length){
+    html += `<h3 style="font-size:13px;margin:12px 0 6px;">🗂 数据集板块（${ds.length} 个，供「模板+数据集生成周报」抓数）</h3>`;
+    html += ds.map(sec=>{
+      const kind = secKind(sec.section);
+      const head = `<span style="font-size:10px;color:#fff;background:${kind.color};border-radius:8px;padding:1px 7px;margin-left:6px">${kind.label}</span>` +
+        (sec.is_task_table?`<span style="font-size:10px;color:var(--muted);border:1px solid var(--border);border-radius:8px;padding:1px 7px;margin-left:4px">含任务列</span>`:'');
+      const rows = (sec.rows||[]).slice(0,8).map(r=>
+        `<tr>${(sec.headers||[]).map(h=>`<td style="border:1px solid var(--border);padding:4px 7px;font-size:11px;">${esc(r[h]!==undefined?r[h]:'')}</td>`).join('')}</tr>`).join('');
+      return `<div style="margin:6px 0;"><b style="font-size:12px;">🗂 ${esc(sec.section)}${head}</b>
+        <table style="width:100%;border-collapse:collapse;margin-top:4px;"><tr>${(sec.headers||[]).map(h=>`<th style="border:1px solid var(--border);padding:4px 7px;font-size:10px;text-align:left;background:var(--bg);">${esc(h)}</th>`).join('')}</tr>${rows||'<tr><td style="padding:6px;color:var(--muted);font-size:11px;">（无数据行）</td></tr>'}</table>
+        ${(sec.rows||[]).length>8?`<div style="font-size:10px;color:var(--muted);margin-top:2px;">… 共 ${sec.rows.length} 行，预览前 8 行</div>`:''}</div>`;
+    }).join('');
+  }
+  $('srcModalBody').innerHTML = html;
+  $('srcModal').style.display='block';
+}
+function secKind(section){
+  const s = section||'';
+  if(/里程碑|milestone/i.test(s)) return {label:'里程碑', color:'#8B5CF6'};
+  if(/风险|问题|risk/i.test(s)) return {label:'风险', color:'#A33A37'};
+  if(/决策|申请|RFA|rfa/i.test(s)) return {label:'决策', color:'#D97706'};
+  if(/指标|看板|数据|metric|kpi/i.test(s)) return {label:'指标', color:'#4A7A1E'};
+  if(/成果|计划|任务|进展|todo|task/i.test(s)) return {label:'任务', color:'#2563EB'};
+  if(/依赖|协作|issue/i.test(s)) return {label:'依赖', color:'#0E7490'};
+  return {label:'其他', color:'#6B7280'};
+}
+async function downloadSource(sid){
+  const a = document.createElement('a');
+  a.href = '/api/sources/'+sid+'/download'; a.download='';
+  document.body.appendChild(a); a.click(); a.remove();
 }
 function showMoveMenu(sid, ev){
   ev.stopPropagation();
@@ -413,6 +675,82 @@ async function renameSheet(sid){
 }
 async function createGroup(){ const n=prompt('分组名称：','新分组'); if(!n)return; await fetch('/api/workspace/groups',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name:n})}); loadWorkspace(); }
 async function delGroup(gid){ if(!confirm('删除分组？（其中的 sheet 不会被删除）'))return; await fetch('/api/workspace/groups/'+gid+'/delete',{method:'POST'}); loadWorkspace(); }
+
+// ============ 工作区批量选取 ============
+function toggleBatch(){
+  state.batchMode = !state.batchMode;
+  if(!state.batchMode) state.batchSel = {};
+  $('batchToggle').textContent = state.batchMode ? '✓ 完成' : '☑ 批量';
+  loadWorkspace();
+  updateBatchBar();
+}
+function toggleSel(sid){
+  if(state.batchSel[sid]) delete state.batchSel[sid]; else state.batchSel[sid] = true;
+  updateBatchBar();
+  // 仅刷新该项的样式（不重建整树，保留拖拽状态）
+  document.querySelectorAll('#workspaceTree .tree-item').forEach(it=>{
+    const cb = it.querySelector('input.batch-check');
+    if(cb && cb.getAttribute('data-sid')===sid){
+      cb.checked = !!state.batchSel[sid];
+      it.classList.toggle('batch-sel', !!state.batchSel[sid]);
+    }
+  });
+}
+function toggleGroupSel(gid){
+  const all = (state.groups[gid]?.sheets||[]).filter(sid=>state.sheet[sid]);
+  const checked = all.length && all.every(sid=>state.batchSel[sid]);
+  all.forEach(sid=>{ if(checked) delete state.batchSel[sid]; else state.batchSel[sid]=true; });
+  updateBatchBar(); loadWorkspace();
+}
+function batchAll(on){
+  Object.keys(state.sheet).forEach(sid=>{ if(on) state.batchSel[sid]=true; else delete state.batchSel[sid]; });
+  updateBatchBar(); loadWorkspace();
+}
+function batchIds(){ return Object.keys(state.batchSel); }
+function updateBatchBar(){
+  const bar = $('batchBar'); if(!bar) return;
+  bar.style.display = state.batchMode ? 'block' : 'none';
+  if(!state.batchMode) return;
+  $('batchCount').textContent = '已选 ' + batchIds().length + ' 个';
+  const sel = $('batchGroupSel');
+  const cur = sel.value;
+  sel.innerHTML = '<option value="">移入分组…</option>' +
+    Object.keys(state.groups||{}).map(gid=>`<option value="${gid}">📁 ${esc(state.groups[gid].name)}</option>`).join('');
+  sel.value = cur && state.groups[cur] ? cur : '';
+}
+async function batchMove(gid){
+  if(!gid){ updateBatchBar(); return; }
+  const ids = batchIds();
+  if(!ids.length){ alert('请先勾选 sheet'); updateBatchBar(); return; }
+  const res = await fetch('/api/workspace/batch',{method:'POST',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({action:'move', sheet_ids:ids, gid})});
+  const d = await res.json();
+  if(!res.ok){ alert('批量移入失败: '+JSON.stringify(d)); return; }
+  alert(`已将 ${d.done.length} 个 sheet 移入「${state.groups[gid].name}」`);
+  state.batchSel = {}; loadWorkspace(); renderTableForCurrent();
+}
+async function batchUngroup(){
+  const ids = batchIds();
+  if(!ids.length){ alert('请先勾选 sheet'); return; }
+  if(!confirm(`将 ${ids.length} 个 sheet 移出所有分组？`)) return;
+  const res = await fetch('/api/workspace/batch',{method:'POST',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({action:'ungroup', sheet_ids:ids})});
+  const d = await res.json();
+  if(!res.ok){ alert('批量移出失败: '+JSON.stringify(d)); return; }
+  state.batchSel = {}; loadWorkspace(); renderTableForCurrent();
+}
+async function batchDelete(){
+  const ids = batchIds();
+  if(!ids.length){ alert('请先勾选 sheet'); return; }
+  if(!confirm(`确定删除 ${ids.length} 个 sheet？（源数据文件仍保留在「源数据」中）`)) return;
+  const res = await fetch('/api/workspace/batch',{method:'POST',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({action:'delete', sheet_ids:ids})});
+  const d = await res.json();
+  if(!res.ok){ alert('批量删除失败: '+JSON.stringify(d)); return; }
+  if(d.missing && d.missing.length) alert(`已删除 ${d.done.length} 个；${d.missing.length} 个不存在（跳过）`);
+  state.batchSel = {}; loadWorkspace();
+  if(!state.sheet[(state.current||'').replace('sheet:','')]){ $('emptyHint').style.display='block'; $('currentView').style.display='none'; }
+}
 
 // ============ 数据表格渲染（含排序筛选颜色） ============
 function renderSheetView(sh){
@@ -642,6 +980,43 @@ async function saveTasks(){
   await loadWorkspace();
   selectSheet(sid);
 }
+// —— 🤖 AI 深度解析：规则结果 → AI 校验修正 → 校对页 diff 确认 ——
+async function aiReviewSheet(){
+  const sid = currentSheetId();
+  if(!sid){ alert('请先点击左侧选中一个 sheet'); return; }
+  $('editMsg') && ($('editMsg').textContent='AI 深度解析中…');
+  try{
+    const res = await fetch('/api/workspace/sheet/'+sid+'/ai-review',{method:'POST'});
+    const d = await res.json();
+    if(!res.ok || !d.ok){ alert('AI 深度解析失败：'+(d.detail||d.error||'未知错误')); return; }
+    // 写入 diff 快照并进入校对页（AI改 标注）
+    state.sheet[sid].rule_tasks = d.rule_tasks;
+    state.sheet[sid].tasks_full = d.tasks;
+    state.current = 'sheet:'+sid;
+    state.editMode = true;
+    $('viewTable').innerHTML=''; $('viewFilters').innerHTML='';
+    renderEditTable(d.tasks, d.rule_tasks);
+    $('editMsg').textContent = d.note||'AI 深度解析完成（请核对 AI改 后保存）';
+  }catch(e){ alert('AI 深度解析失败：'+e.message); }
+}
+// —— 🤖 Agent 一句话入口 ——
+async function runAgent(){
+  const instr = $('agentInput').value.trim();
+  if(!instr){ return; }
+  $('agentLog').textContent='执行中…';
+  try{
+    const res = await fetch('/api/agent/run',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({instruction:instr})});
+    const d = await res.json();
+    if(!res.ok){ $('agentLog').textContent='执行失败：'+(d.detail||''); return; }
+    $('agentLog').innerHTML = `意图：<b>${esc(d.intent)}</b>（${d.ai_used?'AI 识别':'规则回退'}） ｜ 执行：` +
+      (d.log||[]).map(l=>`${esc(l.step)}→${esc(l.tool)}`).join(' › ');
+    if(d.report){
+      $('agentResult').innerHTML = d.report;
+      $('agentResult').style.display='block';
+      state.lastReport = {report:d.report, project:d.project||'Agent', stats:null};
+    }
+  }catch(e){ $('agentLog').textContent='执行失败：'+e.message; }
+}
 async function exportTasks(){
   const sid = currentSheetId();
   let ids = sid ? sid : '';
@@ -845,6 +1220,7 @@ let tplModules = [];          // 模块库
 let tplKpiOptions = [];       // KPI 可选字段
 let tplPresets = {};          // 预置模板
 let tplPhDocs = {};           // 占位符说明（引用路径/计算方式，右键可查）
+let tplAiScopes = [];         // AI 块数据源选项
 let tplSet = state;           // 共享 state
 
 const MODULE_DEFAULTS = {
@@ -861,6 +1237,8 @@ const MODULE_DEFAULTS = {
   'transition': {},
   'project_table': {projects:''},
   'project_sections': {projects:''},
+  'ai_block': {data_scope:'stats_summary', prompt:'请从以下数据中总结 3 条管理层最该关注的事项，逐条列出：\n{data}', system:''},
+  'formula': {expression:'completion_rate', label:'完成率', as_percent:false},
   'custom':  {content:'自定义内容', is_html:false},
 };
 
@@ -870,6 +1248,7 @@ async function loadTemplate(){
   tplKpiOptions = d.kpi_options || [];
   tplPresets = d.presets || {};
   tplPhDocs = d.placeholder_docs || {};
+  tplAiScopes = d.ai_scopes || [];
   // 填充预置模板下拉
   $('presetSelect').innerHTML = Object.keys(tplPresets).map(k=>
     `<option value="${k}">${tplPresets[k].label}${tplPresets[k].desc?' — '+tplPresets[k].desc:''}</option>`).join('');
@@ -988,6 +1367,21 @@ function blockEditorHtml(b,i){
       return `<div class="field"><label>只看部分项目（留空=全部；逗号分隔项目名，如：财务项目,测试项目）</label>
         <input type="text" style="width:100%" value="${esc(b.projects||'')}" placeholder="全部项目" onchange="updBlock(${i},'projects',this.value)">
         <div class="hint">渲染时按「数据」页当前选中的项目/分组输出</div></div>`;
+    case 'ai_block':
+      return `<div class="field"><label>数据源（下拉选择，避免输入偏差）</label>
+        <select style="width:100%" onchange="updBlock(${i},'data_scope',this.value)">
+          ${(tplAiScopes||[]).map(o=>`<option value="${o.value}" ${(b.data_scope||'stats_summary')===o.value?'selected':''}>${o.label}</option>`).join('')}
+        </select></div>
+        <div class="field"><label>提示词（{data} 会被替换为该数据源的实际数据；可写"从xxx中总结/提炼…"句式）</label>
+        <textarea rows="4" style="width:100%;font-size:12px" onchange="updBlock(${i},'prompt',this.value)">${esc(b.prompt||'')}</textarea></div>
+        <div class="field"><label>System（可选，留空用默认"严谨分析助手"）</label>
+        <input type="text" style="width:100%" value="${esc(b.system||'')}" onchange="updBlock(${i},'system',this.value)"></div>`;
+    case 'formula':
+      return `<div class="field"><label>表达式（字段：total/done/in_progress/not_started/delayed/risk/completion_rate/avg_progress/avg_target_progress；支持 + - * / ( ) %）</label>
+        <input type="text" style="width:100%" value="${esc(b.expression||'completion_rate')}" onchange="updBlock(${i},'expression',this.value)" placeholder="如 risk/total*100">
+        <div class="hint">示例：completion_rate（完成率）、avg_progress - avg_target_progress（进度差距）、risk/total*100（风险占比）</div></div>
+        <div class="field"><label>显示名称</label><input type="text" style="width:100%" value="${esc(b.label||'指标')}" onchange="updBlock(${i},'label',this.value)"></div>
+        <label style="font-size:12px;display:flex;gap:3px;align-items:center;"><input type="checkbox" ${b.as_percent?'checked':''} onchange="updBlock(${i},'as_percent',this.checked)"> 结果按百分比显示</label>`;
     case 'custom':
       return `<div class="field"><label>内容${phBtn}</label><textarea rows="3" style="width:100%" onchange="updBlock(${i},'content',this.value)" oncontextmenu="event.preventDefault();showPhDocs(${i})">${esc(b.content||'')}</textarea>
         <label style="font-size:12px;display:flex;gap:3px;align-items:center;margin-top:4px"><input type="checkbox" ${b.is_html?'checked':''} onchange="updBlock(${i},'is_html',this.checked)">作为 HTML</label></div>`;
@@ -1023,6 +1417,80 @@ async function saveTemplateBlocks(){
   const res = await fetch('/api/template',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({format:'blocks', blocks:clean})});
   $('templateMsg').className = res.ok?'msg ok':'msg err';
   $('templateMsg').textContent = res.ok?'模板已保存（后续自动延用）':'保存失败';
+}
+// ============ 自定义块库（AI 提示词块 / 公式计算块，保存复用） ============
+async function showCustomBlocks(){
+  const d = await (await fetch('/api/custom_blocks')).json();
+  const blocks = d.blocks||{};
+  const scopeOpts = (tplAiScopes||[]).map(o=>`<option value="${o.value}">${o.label}</option>`).join('');
+  const list = Object.keys(blocks).length ? Object.keys(blocks).map(n=>{
+    const b = blocks[n];
+    const desc = b.type==='ai_block' ? `数据源=${b.data_scope||'stats_summary'}` : `公式=${b.expression||''}`;
+    return `<div style="display:flex;align-items:center;gap:8px;padding:6px 4px;border-bottom:1px solid var(--border);font-size:13px;">
+      <b>${esc(n)}</b> <span style="font-size:11px;color:var(--muted)">${b.type==='ai_block'?'🧩AI块':'ƒ公式'} · ${esc(desc)}</span>
+      <span style="margin-left:auto;display:flex;gap:6px;">
+        <button class="btn btn-primary btn-sm" style="font-size:11px;padding:2px 8px" onclick="cbInsert('${esc(n).replace(/'/g,"\\'")}',${JSON.stringify(b).replace(/'/g,"\\'")})">插入画布</button>
+        <button class="btn btn-danger btn-sm" style="font-size:11px;padding:2px 8px" onclick="cbDelete('${esc(n).replace(/'/g,"\\'")}')">删除</button>
+      </span></div>`;
+  }).join('') : '<div style="font-size:12px;color:var(--muted);padding:6px 0;">（库为空，先新建一个）</div>';
+  $('cbModalBody').innerHTML = `
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;">
+      <b style="font-size:14px;">🧩 自定义块库</b>
+      <button class="btn btn-danger btn-sm" onclick="$('cbModal').style.display='none'">关闭</button>
+    </div>
+    <div style="max-height:220px;overflow-y:auto;margin-bottom:12px;">${list}</div>
+    <h3 style="font-size:13px;margin:8px 0 6px;">新建并保存</h3>
+    <div class="field"><label>名称</label><input id="cbName" type="text" style="width:100%" placeholder="如：管理层关注事项"></div>
+    <div class="field"><label>类型</label><select id="cbType" style="width:100%" onchange="$('cbCfg').innerHTML=cbType==='ai_block'?cbAiForm():cbFormulaForm()">
+      <option value="ai_block">🧩 AI 提示词块（从{数据源}中{动作}）</option>
+      <option value="formula">ƒ 公式计算块</option>
+    </select></div>
+    <div id="cbCfg"></div>
+    <div class="row" style="margin-top:10px;">
+      <button class="btn btn-primary" onclick="cbSaveNew()">保存到库</button>
+      <span id="cbMsg" style="font-size:12px;color:var(--muted)"></span>
+    </div>`;
+  $('cbCfg').innerHTML = cbAiForm(scopeOpts);
+  $('cbModal').style.display='block';
+}
+function cbAiForm(scopeOpts){
+  return `<div class="field"><label>数据源（下拉）</label><select id="cbScope" style="width:100%">${scopeOpts||''}</select></div>
+    <div class="field"><label>提示词（{data} 会替换为数据）</label>
+    <textarea id="cbPrompt" rows="3" style="width:100%;font-size:12px">请从以下数据中总结 3 条管理层最该关注的事项，逐条列出：\n{data}</textarea></div>
+    <div class="field"><label>System（可选）</label><input id="cbSystem" type="text" style="width:100%" placeholder="留空用默认"></div>`;
+}
+function cbFormulaForm(){
+  return `<div class="field"><label>表达式</label><input id="cbExpr" type="text" style="width:100%" placeholder="risk/total*100" value="risk/total*100"></div>
+    <div class="field"><label>显示名称</label><input id="cbLabel" type="text" style="width:100%" placeholder="风险占比" value="风险占比"></div>
+    <label style="font-size:12px;display:flex;gap:3px;align-items:center;"><input id="cbPct" type="checkbox" checked> 按百分比显示</label>`;
+}
+async function cbSaveNew(){
+  const name = $('cbName').value.trim();
+  if(!name){ alert('请输入名称'); return; }
+  const type = $('cbType').value;
+  let def;
+  if(type==='ai_block'){
+    def = {type:'ai_block', data_scope:$('cbScope').value, prompt:$('cbPrompt').value, system:$('cbSystem').value.trim()};
+  }else{
+    def = {type:'formula', expression:$('cbExpr').value.trim(), label:$('cbLabel').value.trim()||'指标', as_percent:$('cbPct').checked};
+  }
+  $('cbMsg').textContent='保存中...';
+  const res = await fetch('/api/custom_blocks',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name, definition:def})});
+  const d = await res.json();
+  $('cbMsg').textContent = res.ok ? (d.note||'已保存') : (d.detail||'失败');
+  showCustomBlocks();
+}
+async function cbInsert(name, def){
+  tplBlocks.push({...JSON.parse(JSON.stringify(def)), _id:'cb'+Date.now()+Math.floor(Math.random()*1000)});
+  renderCanvas();
+  $('cbModal').style.display='none';
+  $('templateMsg').className='msg ok';
+  $('templateMsg').textContent=`已插入自定义块「${name}」到画布（可继续编辑后保存模板）`;
+}
+async function cbDelete(name){
+  if(!confirm('删除自定义块「'+name+'」？')) return;
+  await fetch('/api/custom_blocks/delete',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name})});
+  showCustomBlocks();
 }
 async function resetTemplate(){
   if(!confirm('恢复默认模板？')) return;
@@ -1081,6 +1549,7 @@ async function generateReport(){
   let fd=new FormData();
   fd.append('project_name',$('genProject').value);
   fd.append('period',$('genPeriod').value);
+  fd.append('report_type', genReportType);
   fd.append('use_ai',$('genUseAI').checked);
   // 当前选中的 sheet 或分组
   const cur=state.current;
@@ -1126,21 +1595,58 @@ async function saveToHistory(){
   const ts=new Date(); const pad=n=>String(n).padStart(2,'0');
   const name=`${ts.getFullYear()}${pad(ts.getMonth()+1)}${pad(ts.getDate())}_${pad(ts.getHours())}${pad(ts.getMinutes())}_${(state.lastReport.project||'周报')}.html`;
   await fetch('/api/save_report',{method:'POST',headers:{'Content-Type':'application/json'},
-    body:JSON.stringify({filename:name,content:state.lastReport.report,stats:state.lastReport.stats||null})});
-  alert('已存入历史（下次生成将自动与本周对比）');
+    body:JSON.stringify({filename:name,content:state.lastReport.report,stats:state.lastReport.stats||null,
+      report_type:genReportType, period:$('genPeriod').value})});
+  alert('已存入文稿库（下次生成将自动与本期对比）');
   loadHistory();
+}
+function setReportType(t){
+  genReportType = t;
+  $('rtWeek').className = t==='week' ? 'btn btn-primary' : 'btn btn-outline';
+  $('rtDay').className = t==='day' ? 'btn btn-primary' : 'btn btn-outline';
+  $('genPeriod').placeholder = t==='day' ? '日期，如 2026-08-25' : '周期，如 2026-W33';
+}
+function setHistType(t){
+  histType = t;
+  [['','histTypeAll'],['week','histTypeWeek'],['day','histTypeDay']].forEach(([k,id])=>{
+    $(id).className = k===t ? 'btn btn-primary' : 'btn btn-outline';
+  });
+  loadHistory();
+}
+function toggleHistSel(name, ch){
+  if(ch) histSel[name]=1; else delete histSel[name];
+  $('summarizeBtn').textContent = `汇总选中(${Object.keys(histSel).length})`;
+}
+async function summarizeSelected(){
+  const names = Object.keys(histSel);
+  if(!names.length){ alert('请先勾选要汇总的文稿'); return; }
+  $('genMsg').className=''; $('genMsg').textContent='汇总中...';
+  const res = await fetch('/api/documents/summarize',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({names})});
+  const d = await res.json();
+  if(!res.ok){ $('genMsg').className='msg err'; $('genMsg').textContent='汇总失败：'+(d.detail||''); return; }
+  $('reportBox').innerHTML = d.report;
+  $('exportRow').style.display='flex';
+  state.lastReport = {report:d.report, project:d.project, stats:null};
+  $('genMsg').className='msg ok';
+  $('genMsg').textContent = `已汇总 ${d.n} 份文稿为「${d.project}」（确定性合并，未调 AI）`;
 }
 async function loadHistory(){
   const d=await(await fetch('/api/history')).json();
-  const itemHtml = it => `<li><span>📄 ${esc(it.name)} ${it.has_stats?'<span class="pill" style="background:var(--primary);font-size:10px;">↻ 环比</span>':''}</span>
-      <span style="display:flex;gap:8px;align-items:center"><span style="font-size:11px;color:var(--muted)">${it.mtime}</span>
+  const kw = ($('histSearch') ? $('histSearch').value : '').trim().toLowerCase();
+  const typeBadge = it => it.rtype==='day' ? '<span class="pill" style="background:#E65100;font-size:10px;">📆日报</span>'
+                       : it.rtype==='week' ? '<span class="pill" style="background:var(--primary);font-size:10px;">📅周报</span>' : '';
+  const itemHtml = it => `<li><label style="display:flex;gap:6px;align-items:center;flex:1;cursor:pointer;min-width:0;">
+      <input type="checkbox" ${histSel[it.name]?'checked':''} onchange="toggleHistSel('${it.name}',this.checked)">
+      <span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">📄 ${esc(it.name)} ${typeBadge(it)} ${it.period?`<span style="font-size:10px;color:var(--muted)">(${esc(it.period)})</span>`:''} ${it.has_stats?'<span class="pill" style="background:var(--primary);font-size:10px;">↻</span>':''}</span></label>
+      <span style="display:flex;gap:8px;align-items:center;flex-shrink:0;"><span style="font-size:11px;color:var(--muted)">${it.mtime}</span>
       <button class="btn btn-outline btn-sm" onclick="viewHistory('${it.name}')" style="font-size:11px;padding:4px 10px">查看</button>
       <button class="btn btn-outline btn-sm" onclick="renHistory('${it.name}')" style="font-size:11px;padding:4px 8px">重命名</button>
       <button class="btn btn-danger btn-sm" onclick="delHistory('${it.name}')" style="font-size:11px;padding:4px 8px">删除</button></span></li>`;
-  if(!d.items || !d.items.length){ $('historyList').innerHTML='<li style="color:var(--muted)">暂无历史</li>'; loadTrend(); return; }
+  let items = (d.items||[]).filter(it=>(!histType || it.rtype===histType) && (!kw || it.name.toLowerCase().includes(kw)));
+  if(!items.length){ $('historyList').innerHTML='<li style="color:var(--muted)">暂无匹配文稿</li>'; loadTrend(); return; }
   // 按项目分组展示
   const groups = {};
-  d.items.forEach(it=>{ const g = it.project || '（未分类）'; (groups[g]=groups[g]||[]).push(it); });
+  items.forEach(it=>{ const g = it.project || '（未分类）'; (groups[g]=groups[g]||[]).push(it); });
   let html = '';
   for(const g in groups){
     html += `<li style="font-size:12px;font-weight:600;color:var(--primary);padding:8px 0 2px;">📁 ${esc(g)}（${groups[g].length}）</li>`;
@@ -1275,6 +1781,169 @@ async function saveAiConfig(){
   $('aiCfgMsg').textContent = res.ok ? (d.note||'已保存') : (d.detail||'保存失败');
 }
 
+// ============ AI 提示词管理（可编辑调试 + 示例 few-shot） ============
+let promptState = {};
+async function loadPrompts(){
+  const d = await (await fetch('/api/settings/prompts')).json();
+  promptState = {};
+  $('promptList').innerHTML = (d.items||[]).map(it=>{
+    promptState[it.key] = {
+      system:it.system, user:it.user, examples:(it.examples||[]).join('\n---\n'),
+      defSystem:it.default_system, defUser:it.default_user, defExamples:(it.default_examples||[]).join('\n---\n')
+    };
+    const ph = Object.keys(it.docs||{}).join(' ');
+    return `<div style="border:1px solid var(--border);border-radius:8px;padding:10px;margin-bottom:10px;">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;">
+        <b style="font-size:13px;">${esc(it.label)}${it.modified?' <span class="pill" style="background:#E65100;font-size:10px">已修改</span>':''}</b>
+        <button class="btn btn-outline btn-sm" style="font-size:11px;padding:2px 8px" onclick="resetPrompt('${it.key}')">恢复该项默认</button>
+      </div>
+      <div style="display:flex;gap:8px;flex-wrap:wrap;">
+        <div style="flex:1;min-width:240px;">
+          <div style="font-size:11px;color:var(--muted);margin-bottom:2px;">System（角色与纪律）</div>
+          <textarea rows="2" style="width:100%;font-size:12px" onchange="promptState['${it.key}'].system=this.value">${esc(it.system)}</textarea>
+        </div>
+        <div style="flex:2;min-width:300px;">
+          <div style="font-size:11px;color:var(--muted);margin-bottom:2px;">User（任务与格式）｜占位符：${esc(ph)}</div>
+          <textarea rows="5" style="width:100%;font-size:12px" onchange="promptState['${it.key}'].user=this.value">${esc(it.user)}</textarea>
+        </div>
+      </div>
+      <div style="margin-top:6px;">
+        <div style="font-size:11px;color:var(--muted);margin-bottom:2px;">示例（few-shot，AI 将模仿其风格与结构；多个示例用 --- 分隔）</div>
+        <textarea rows="2" style="width:100%;font-size:12px" onchange="promptState['${it.key}'].examples=this.value">${esc(promptState[it.key].examples)}</textarea>
+      </div>
+    </div>`;
+  }).join('') || '<div style="font-size:12px;color:var(--muted)">暂无提示词配置</div>';
+}
+function splitExamples(txt){ return String(txt||'').split(/\n---\n/).map(s=>s.trim()).filter(Boolean); }
+async function saveAllPrompts(){
+  const overrides = {};
+  for(const k in promptState){
+    const p = promptState[k];
+    const ex = splitExamples(p.examples), dex = splitExamples(p.defExamples);
+    const changed = p.system!==p.defSystem || p.user!==p.defUser || JSON.stringify(ex)!==JSON.stringify(dex);
+    if(changed) overrides[k] = {system:p.system, user:p.user, examples:ex};
+  }
+  if(!Object.keys(overrides).length){ $('promptMsg').textContent='没有需要保存的修改'; return; }
+  $('promptMsg').textContent='保存中...';
+  const res = await fetch('/api/settings/prompts',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({overrides})});
+  const d = await res.json();
+  $('promptMsg').textContent = res.ok ? (d.note||'已保存') : (d.detail||'保存失败');
+  loadPrompts();
+}
+async function resetPrompt(key){
+  if(!confirm('恢复该项默认提示词？')) return;
+  const res = await fetch('/api/settings/prompts',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({overrides:{[key]:{}}})});
+  await res.json(); loadPrompts();
+}
+async function resetAllPrompts(){
+  if(!confirm('恢复全部默认提示词？')) return;
+  await fetch('/api/settings/prompts/reset',{method:'POST'});
+  $('promptMsg').textContent='已恢复默认';
+  loadPrompts();
+}
+
+// ============ 看板（按 skill 设计语言：KPI卡带涨跌/迷你趋势、升即坏反色、分组独立成区） ============
+const GOOD = '#4A7A1E', BAD = '#A33A37', GRAY = '#9AA0B5';
+let dashState = {view:'all', per:'recent4'};
+function setDashView(v){
+  dashState.view = v;
+  ['all','groups'].forEach(x=>{
+    const b = x==='all' ? $('dashViewAll') : $('dashViewGroups');
+    b.className = x===v ? 'btn btn-primary' : 'btn btn-outline';
+  });
+  loadDashboard();
+}
+function setDashPer(p){
+  dashState.per = p;
+  [['recent4','dashPer4'],['recent12','dashPer12'],['all','dashPerAll']].forEach(([k,id])=>{
+    $(id).className = k===p ? 'btn btn-primary' : 'btn btn-outline';
+  });
+  loadDashboard();
+}
+function dashSeries(trend, name, key){
+  // 取某项目/分组的序列（历史是新的在前 → 翻转为旧→新）
+  const f = (trend||[]).filter(e=>!name || e.name===name);
+  return f.map(e=>e[key]).filter(v=>v!=null).reverse();
+}
+function sparkSvg(vals, color, w=84, h=22){
+  if(!vals || vals.length<2) return '';
+  const min = Math.min(...vals), max = Math.max(...vals), span = Math.max(max-min, 1);
+  const pts = vals.slice(-10).map((v,i)=>`${(i/(Math.min(vals.length,10)-1))*w},${h-2-((v-min)/span)*(h-4)}`).join(' ');
+  return `<svg width="${w}" height="${h}" style="display:block;margin:4px auto 0;"><polyline points="${pts}" fill="none" stroke="${color}" stroke-width="1.5"/></svg>`;
+}
+function deltaBadge(series, inverse){
+  if(!series || series.length<2) return `<span style="font-size:10px;color:${GRAY}">—</span>`;
+  const d = series[series.length-1] - series[series.length-2];
+  const up = d > 0.05, down = d < -0.05;
+  const good = up !== inverse;   // 升即坏：上升=坏
+  let color = GRAY, txt = '持平';
+  if(up){ color = good?GOOD:BAD; txt = '↑'+(inverse?'':'+')+d.toFixed(1); }
+  if(down){ color = good?GOOD:BAD; txt = '↓'+Math.abs(d).toFixed(1); }
+  return `<span style="font-size:10px;font-weight:600;color:${color};">${txt}</span>`;
+}
+function kpiCard(label, value, sub, series, inverse, sparkColor){
+  return `<div class="kpi" style="min-width:110px;">
+    <div style="font-size:20px;font-weight:700;color:var(--primary);">${value}</div>
+    <div style="font-size:11px;color:var(--muted);margin-top:2px;">${label}</div>
+    ${sub?`<div style="font-size:10px;color:var(--muted);">${sub}</div>`:''}
+    <div style="display:flex;justify-content:center;gap:6px;align-items:center;">${deltaBadge(series, inverse)}</div>
+    ${sparkSvg(series, sparkColor||GOOD)}
+  </div>`;
+}
+function dashAlerts(tasks){
+  const seen = {}, risks = (tasks||[]).filter(t=>t.risk_level && t.risk_level!=='正常' && !seen[t.name] && (seen[t.name]=1));
+  if(!risks.length) return '<div style="font-size:12px;color:var(--muted);">✅ 无风险/预警项</div>';
+  return risks.slice(0,12).map(t=>{
+    const c = t.risk_level==='风险' ? riskColor('风险') : riskColor('关注');
+    return `<div class="risk-item" style="border-left-color:${c};"><span class="pill" style="background:${c}">${t.risk_level}</span> <b>${esc(t.name)}</b> ${t.risk_reason?`<span style="color:var(--muted)">：${esc(t.risk_reason)}</span>`:''}</div>`;
+  }).join('');
+}
+function dashTable(tasks){
+  const rows = (tasks||[]).slice(0,10).map(t=>
+    `<tr><td style="border:1px solid var(--border);padding:5px 8px;font-size:12px;">${t.is_critical?'🔑 ':''}${esc(t.name)}</td>
+     <td style="border:1px solid var(--border);padding:5px 8px;font-size:12px;text-align:right;font-variant-numeric:tabular-nums;">${t.progress!=null?t.progress+'%':'-'}</td>
+     <td style="border:1px solid var(--border);padding:5px 8px;font-size:12px;">${esc(t.status_norm||t.status||'-')}</td>
+     <td style="border:1px solid var(--border);padding:5px 8px;font-size:12px;"><span class="pill" style="background:${riskColor(t.risk_level||'正常')};font-size:10px;">${t.risk_level||'正常'}</span></td></tr>`).join('');
+  return `<table style="width:100%;border-collapse:collapse;"><tr><th style="border:1px solid var(--border);padding:5px 8px;font-size:11px;text-align:left;">任务</th><th style="border:1px solid var(--border);padding:5px 8px;font-size:11px;text-align:right;">进度</th><th style="border:1px solid var(--border);padding:5px 8px;font-size:11px;">状态</th><th style="border:1px solid var(--border);padding:5px 8px;font-size:11px;">风险</th></tr>${rows}</table>`;
+}
+function dashBlock(title, s, trend, name){
+  if(!s) return `<div class="card" style="margin-bottom:14px;"><h2>${title}</h2><div style="font-size:12px;color:var(--muted)">（无数据）</div></div>`;
+  const crSer = dashSeries(trend, name, 'completion_rate');
+  const rkSer = dashSeries(trend, name, 'risk');
+  const cards =
+    kpiCard('完成率', s.completion_rate+'%', `${s.done||0}/${s.total||0} 已完成`, crSer, false, '#4A6CF7') +
+    kpiCard('平均实际', s.avg_progress+'%', '', null, false) +
+    kpiCard('风险/预警', s.risk||0, `${(s.tasks||[]).filter(t=>t.risk_level==='风险').length} 高风险`, rkSer, true, BAD) +
+    kpiCard('滞后', s.delayed||0, '', null, true) +
+    kpiCard('关键任务', (s.tasks||[]).filter(t=>t.is_critical).length, '', null, false);
+  return `<div class="card" style="margin-bottom:14px;">
+    <h2 style="margin-bottom:10px;">${title} ${name?`<span style="font-size:11px;color:var(--muted);font-weight:400;">（趋势按同名历史 ${crSer.length?crSer.length+' 期':'暂无，生成该组周报并存历史后出现' }）</span>`:''}</h2>
+    <div class="kpi-grid" style="grid-template-columns:repeat(auto-fit,minmax(120px,1fr));">${cards}</div>
+    <div style="margin-top:10px;"><b style="font-size:13px;">🔴 预警与风险</b>${dashAlerts(s.tasks)}</div>
+    <div style="margin-top:10px;"><b style="font-size:13px;">📋 重点项目（前10）</b>${dashTable(s.tasks)}</div>
+  </div>`;
+}
+async function loadDashboard(){
+  try{
+    const d = await (await fetch('/api/dashboard')).json();
+    const per = dashState.per;
+    const trend = per==='all' ? (d.trend||[]) : (d.trend||[]).slice(0, per==='recent12'?12:4);
+    const hasGroups = Object.keys(d.groups||{}).length || (d.groups||[]).length;
+    const gcount = Array.isArray(d.groups)? d.groups.length : Object.keys(d.groups||{}).length;
+    $('dashMeta').textContent = `工作区 ${(d.global&&d.global.total)||0} 任务 ｜ 分组 ${gcount} ｜ 分类仓 ${Object.entries(d.items_summary||{}).map(([k,v])=>`${k} ${v}`).join('、') || '空'}`;
+    $('dashGlobal').innerHTML = dashState.view==='all' || !gcount
+      ? dashBlock('📊 全工作区总览', d.global, trend, '')
+      : '';
+    $('dashGroups').innerHTML = dashState.view==='groups'
+      ? (d.groups||[]).map(g=>dashBlock('📁 '+g.name, g.summary, trend, g.name)).join('')
+      : '';
+    if(dashState.view==='all' && gcount){
+      // 全部视图下，分组并列展示（不混在一起）
+      $('dashGroups').innerHTML = (d.groups||[]).map(g=>dashBlock('📁 '+g.name, g.summary, trend, g.name)).join('');
+    }
+  }catch(e){ $('dashGlobal').innerHTML='<div class="card">看板加载失败：'+esc(e.message)+'</div>'; }
+}
+
 // ============ 深色模式 / 首次引导 ============
 function toggleDark(){
   document.body.classList.toggle('dark');
@@ -1291,10 +1960,11 @@ document.querySelectorAll('.tab').forEach(t=>t.addEventListener('click',()=>{
   document.querySelectorAll('.tab').forEach(x=>x.classList.remove('active'));
   document.querySelectorAll('.panel').forEach(x=>x.classList.remove('active'));
   t.classList.add('active'); $('panel-'+t.dataset.tab).classList.add('active');
+  if(t.dataset.tab==='dashboard') loadDashboard();
   if(t.dataset.tab==='report') loadHistory();
   if(t.dataset.tab==='rules') loadRules();
   if(t.dataset.tab==='template') loadTemplate();
-  if(t.dataset.tab==='settings'){ loadKeyStatus(); loadTokenUsage(); loadAiConfig(); }
+  if(t.dataset.tab==='settings'){ loadKeyStatus(); loadTokenUsage(); loadAiConfig(); loadPrompts(); }
 }));
 if(localStorage.getItem('pm_dark')==='1'){ document.body.classList.add('dark'); $('darkBtn').textContent='☀️'; }
 if(!localStorage.getItem('pm_onboard')){ $('onboard').style.display='block'; }
@@ -1302,7 +1972,7 @@ if(!localStorage.getItem('pm_onboard')){ $('onboard').style.display='block'; }
 document.addEventListener('click', e=>{
   if(!e.target.closest('#moveMenu') && !e.target.closest('.tree-item .ghost')) $('moveMenu').style.display='none';
 });
-loadRules(); loadTemplate(); loadKeyStatus(); loadTokenUsage(); loadAiConfig();
+loadRules(); loadTemplate(); loadKeyStatus(); loadTokenUsage(); loadAiConfig(); loadPrompts(); loadDashboard();
 </script>
 </body>
 </html>

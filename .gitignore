@@ -4,10 +4,13 @@ config/keys.json
 # 用户自定义规则
 config/rules.json
 config/rules_history.json
+config/prompts.json
+config/custom_blocks.json
 
 # 运行期状态
 history/
 tmp_uploads/
+data_sources/
 *.log
 
 # Python
