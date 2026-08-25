@@ -1,0 +1,121 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>📄 文稿库 · PM Report Agent</title>
+<style>
+  :root { --primary:#4A6CF7; --bg:#F7F8FA; --card:#fff; --border:#E4E7EC; --text:#2D3142; --muted:#6B6B80; }
+  * { margin:0; padding:0; box-sizing:border-box; }
+  body { font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',system-ui,sans-serif; background:var(--bg); color:var(--text); line-height:1.6; padding:24px 32px; }
+  h1 { font-size:19px; margin-bottom:4px; }
+  .sub { font-size:13px; color:var(--muted); margin-bottom:18px; }
+  .back { text-decoration:none; color:var(--primary); font-size:13px; float:right; }
+  .layout { display:flex; gap:20px; flex-wrap:wrap; }
+  .cal-panel { background:var(--card); border:1px solid var(--border); border-radius:12px; padding:18px; flex:1; min-width:320px; max-width:420px; }
+  .list-panel { background:var(--card); border:1px solid var(--border); border-radius:12px; padding:18px; flex:2; min-width:320px; }
+  .cal-head { display:flex; align-items:center; justify-content:space-between; margin-bottom:12px; }
+  .cal-head button { background:#EEF2FF; border:none; color:var(--primary); border-radius:6px; padding:3px 12px; cursor:pointer; font-size:14px; }
+  .cal-head .ym { font-weight:700; font-size:15px; }
+  .cal-grid { display:grid; grid-template-columns:repeat(7,1fr); gap:4px; }
+  .cal-grid .dow { text-align:center; font-size:11px; color:var(--muted); padding:4px 0; }
+  .cal-day { text-align:center; padding:7px 0; border-radius:8px; font-size:13px; cursor:pointer; }
+  .cal-day.has { background:#EEF2FF; font-weight:600; color:var(--primary); }
+  .cal-day.has::after { content:''; display:block; width:4px; height:4px; border-radius:50%; background:var(--primary); margin:1px auto 0; }
+  .cal-day.sel { background:var(--primary); color:#fff; }
+  .cal-day.sel::after { background:#fff; }
+  .filters { display:flex; gap:6px; margin-bottom:12px; flex-wrap:wrap; }
+  .f { background:#F0F2F5; border:none; border-radius:8px; padding:3px 12px; font-size:12px; cursor:pointer; }
+  .f.on { background:var(--primary); color:#fff; }
+  input[type=text] { border:1px solid var(--border); border-radius:8px; padding:5px 10px; font-size:12px; width:180px; }
+  .item { display:flex; align-items:center; gap:10px; padding:9px 6px; border-bottom:1px solid var(--border); font-size:13px; }
+  .item:last-child { border-bottom:none; }
+  .item .name { flex:1; }
+  .item a { color:var(--primary); text-decoration:none; font-size:12px; }
+  .tag { font-size:10px; background:#EEF2FF; color:var(--primary); border-radius:8px; padding:1px 7px; }
+  .empty { color:var(--muted); font-size:13px; padding:20px 6px; }
+</style>
+</head>
+<body>
+<div class="sub" style="display:flex;justify-content:space-between;align-items:center;">
+  <div><h1>📄 文稿库</h1><div>生成/保存的日周报 · 按日期（日历）归档 · 类型筛选 · 搜索</div></div>
+  <a class="back" href="/libraries.html" target="_blank">← 返回数据库中心</a>
+</div>
+<div class="layout">
+  <div class="cal-panel">
+    <div class="cal-head">
+      <button onclick="calMove(-1)">‹</button>
+      <span class="ym" id="calYM"></span>
+      <button onclick="calMove(1)">›</button>
+    </div>
+    <div class="cal-grid" id="calGrid"></div>
+    <div class="filters" style="margin-top:12px;">
+      <button class="f on" data-t="" onclick="setType(this,'')">全部</button>
+      <button class="f" data-t="week" onclick="setType(this,'week')">📅 周报</button>
+      <button class="f" data-t="day" onclick="setType(this,'day')">📆 日报</button>
+      <input type="text" id="q" placeholder="搜索文稿…" oninput="renderList()">
+    </div>
+  </div>
+  <div class="list-panel">
+    <h3 style="font-size:14px;margin-bottom:10px;" id="listTitle">📄 文稿列表</h3>
+    <div id="reportList"></div>
+  </div>
+</div>
+<script>
+const $ = id => document.getElementById(id);
+let curYear = new Date().getFullYear(), curMonth = new Date().getMonth()+1;
+let allItems = [], byDate = {}, selDate = '', ftype = '', q = '';
+async function load(){
+  const d = await (await fetch('/api/history')).json();
+  allItems = d.items||[];
+  byDate = {};
+  for(const it of allItems){
+    const day = (it.mtime||'').slice(0,10);
+    (byDate[day]=byDate[day]||[]).push(it);
+  }
+  renderCal();
+  const today = new Date();
+  const tk = `${today.getFullYear()}-${String(today.getMonth()+1).padStart(2,'0')}-${String(today.getDate()).padStart(2,'0')}`;
+  selectDate(byDate[tk]?tk:Object.keys(byDate).sort().pop()||'');
+}
+function calMove(d){ curMonth+=d; if(curMonth<1){curMonth=12;curYear--;} if(curMonth>12){curMonth=1;curYear++;} renderCal(); }
+function renderCal(){
+  $('calYM').textContent = `${curYear} 年 ${curMonth} 月`;
+  const first = new Date(curYear, curMonth-1, 1), dim = new Date(curYear, curMonth, 0).getDate(), sw = first.getDay();
+  let html = ['日','一','二','三','四','五','六'].map(d=>`<div class="dow">${d}</div>`).join('');
+  for(let i=0;i<sw;i++) html += '<div class="cal-day" style="cursor:default"></div>';
+  for(let d=1; d<=dim; d++){
+    const key = `${curYear}-${String(curMonth).padStart(2,'0')}-${String(d).padStart(2,'0')}`;
+    const has = byDate[key]&&byDate[key].length;
+    html += `<div class="cal-day ${has?'has':''} ${key===selDate?'sel':''}" onclick="selectDate('${key}')">${d}</div>`;
+  }
+  $('calGrid').innerHTML = html;
+}
+function setType(btn, t){ ftype=t; document.querySelectorAll('.f').forEach(b=>b.classList.toggle('on', b.dataset.t===t)); renderList(); }
+function selectDate(key){ selDate=key; renderCal(); renderList(); }
+function renderList(){
+  let items = selDate ? (byDate[selDate]||[]) : allItems;
+  if(ftype) items = items.filter(it=>it.rtype===ftype);
+  const qq = q.trim().toLowerCase();
+  if(qq) items = items.filter(it=>it.name.toLowerCase().includes(qq)||(it.project||'').toLowerCase().includes(qq));
+  $('listTitle').textContent = `📄 ${selDate||'全部'} 文稿（${items.length}）`;
+  $('reportList').innerHTML = items.length ? items.map(it=>`
+    <div class="item">
+      <span class="name" title="${esc(it.name)}">${it.rtype==='week'?'📅':'📆'} ${esc(it.name)}</span>
+      ${it.project?`<span class="tag">${esc(it.project)}</span>`:''}
+      ${it.rtype?`<span class="tag">${it.rtype==='week'?'周报':'日报'}</span>`:''}
+      <span style="font-size:11px;color:var(--muted)">${esc((it.mtime||'').slice(5,16))}</span>
+      <a href="/api/history/${encodeURIComponent(it.name)}" target="_blank">查看</a>
+      <a href="#" onclick="event.preventDefault();delItem('${esc(it.name)}')">🗑</a>
+    </div>`).join('') : '<div class="empty">没有符合条件的文稿</div>';
+}
+async function delItem(name){
+  if(!confirm(`删除「${name}」？`)) return;
+  await fetch('/api/history/'+encodeURIComponent(name)+'/delete',{method:'POST'});
+  load();
+}
+function esc(s){ return String(s??'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
+load();
+</script>
+</body>
+</html>

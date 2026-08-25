@@ -1,0 +1,114 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>⚙️ 规则库 · PM Report Agent</title>
+<style>
+  :root { --primary:#4A6CF7; --bg:#F7F8FA; --card:#fff; --border:#E4E7EC; --text:#2D3142; --muted:#6B6B80; --danger:#C0504D; }
+  * { margin:0; padding:0; box-sizing:border-box; }
+  body { font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',system-ui,sans-serif; background:var(--bg); color:var(--text); line-height:1.6; padding:24px 32px; }
+  h1 { font-size:19px; margin-bottom:4px; }
+  .sub { font-size:13px; color:var(--muted); margin-bottom:18px; }
+  .back { text-decoration:none; color:var(--primary); font-size:13px; float:right; }
+  .card { background:var(--card); border:1px solid var(--border); border-radius:12px; padding:18px; margin-bottom:16px; }
+  .card h3 { font-size:14px; margin-bottom:10px; }
+  .req { background:#F0FDF4; border:1px solid #BBF7D0; border-radius:10px; padding:10px 14px; margin-bottom:8px; font-size:13px; }
+  .req b { color:#166534; }
+  .req .meta { font-size:11px; color:var(--muted); margin-top:2px; }
+  .kv { display:flex; justify-content:space-between; padding:7px 4px; border-bottom:1px solid var(--border); font-size:13px; }
+  .kv:last-child { border-bottom:none; }
+  .kv .v { color:var(--primary); font-weight:600; }
+  .converse { display:flex; gap:8px; margin-bottom:10px; flex-wrap:wrap; }
+  input[type=text] { flex:1; min-width:240px; border:1px solid var(--border); border-radius:8px; padding:7px 12px; font-size:13px; }
+  .btn { border:none; border-radius:8px; padding:7px 16px; font-size:13px; cursor:pointer; }
+  .btn-primary { background:var(--primary); color:#fff; }
+  .btn-outline { background:#fff; border:1px solid var(--border); color:var(--text); }
+  .btn-danger { background:var(--danger); color:#fff; }
+  .draft { background:#EEF2FF; border:1px solid #C7D2FE; border-radius:10px; padding:12px 14px; margin-top:10px; font-size:13px; }
+  .tag { display:inline-block; font-size:10px; background:#EEF2FF; color:var(--primary); border-radius:8px; padding:1px 7px; margin-left:6px; }
+</style>
+</head>
+<body>
+<div class="sub" style="display:flex;justify-content:space-between;align-items:center;">
+  <div><h1>⚙️ 规则库</h1><div>规则阈值 / 忽略词 / 列名 / 状态词映射 + AI 工作要求 · 支持对话式添加</div></div>
+  <a class="back" href="/libraries.html" target="_blank">← 返回数据库中心</a>
+</div>
+
+<div class="card">
+  <h3>💬 对话式添加规则（AI 理解 → 人工确认 → 写入）</h3>
+  <div class="converse">
+    <input type="text" id="ruleIn" placeholder="用自然语言描述规则，如：超期超过10天的任务标记高风险 / 周报风险部分按等级从高到低排序" onkeydown="if(event.key==='Enter')converse()">
+    <button class="btn btn-primary" onclick="converse()">🤖 AI 理解</button>
+  </div>
+  <div id="draftBox"></div>
+  <div id="converseMsg" style="font-size:12px;color:var(--muted);"></div>
+</div>
+
+<div class="card">
+  <h3>📋 AI 工作要求（requirements，注入 AI 生成环节）</h3>
+  <div id="reqList"></div>
+</div>
+
+<div class="card">
+  <h3>🔢 规则参数</h3>
+  <div id="rulesList"></div>
+</div>
+
+<script>
+const $ = id => document.getElementById(id);
+let rules = {}, meta = {}, pendingDraft = null;
+async function load(){
+  const d = await (await fetch('/api/rules')).json();
+  rules = d.rules||{}; meta = d.meta||{};
+  // 工作要求
+  const reqs = rules.requirements||[];
+  $('reqList').innerHTML = reqs.length ? reqs.map(r=>`
+    <div class="req"><b>${esc(r.title)}</b> <span class="tag">${esc(r.scope||'全部')}</span><span class="tag">${esc(r.applies_to||'全部')}</span>
+      <div>${esc(r.description)}</div></div>`).join('')
+    : '<div style="color:var(--muted);font-size:13px;">暂无工作要求 —— 用上方对话框添加，或在主面板「规则配置」页管理</div>';
+  // 规则参数
+  const kvs = Object.entries(rules).filter(([k])=>!['requirements','ignore_keywords','column_aliases','status_words'].includes(k));
+  $('rulesList').innerHTML = kvs.map(([k,v])=>{
+    const m = meta[k]||{};
+    return `<div class="kv"><span>${esc(m.label||k)} <span style="font-size:11px;color:var(--muted)">${esc(m.desc||'')}</span></span><span class="v">${esc(v)}</span></div>`;
+  }).join('') + (rules.ignore_keywords?.length?`<div class="kv"><span>忽略词</span><span class="v">${esc(rules.ignore_keywords.join('、'))}</span></div>`:'')
+    + (Object.keys(rules.column_aliases||{}).length?`<div class="kv"><span>列名映射</span><span class="v">${esc(JSON.stringify(rules.column_aliases))}</span></div>`:'')
+    + (Object.keys(rules.status_words||{}).length?`<div class="kv"><span>状态词映射</span><span class="v">${esc(JSON.stringify(rules.status_words))}</span></div>`:'');
+}
+async function converse(){
+  const instr = $('ruleIn').value.trim();
+  if(!instr){ alert('请输入规则需求'); return; }
+  $('converseMsg').textContent = '⏳ AI 正在理解…';
+  $('draftBox').innerHTML = '';
+  try{
+    const res = await fetch('/api/rules/converse',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({instruction:instr})});
+    const d = await res.json();
+    if(!res.ok){ $('converseMsg').textContent = '失败: '+(d.detail||JSON.stringify(d)); return; }
+    if(!d.understood){ $('converseMsg').textContent = d.note||'未能理解'; return; }
+    pendingDraft = d.draft;
+    $('draftBox').innerHTML = `<div class="draft"><b>🤖 AI 理解结果</b>（请人工确认）<br>
+      类型：<b>${esc(d.draft.type)}</b> ｜ 标题：${esc(d.draft.title)}<br>
+      内容：${esc(JSON.stringify({value:d.draft.value,key:d.draft.key,scope:d.draft.scope,applies_to:d.draft.applies_to},null,1))}<br>
+      <div style="margin-top:8px;display:flex;gap:8px;">
+        <button class="btn btn-primary" onclick="confirmDraft()">✅ 确认写入</button>
+        <button class="btn btn-outline" onclick="$('draftBox').innerHTML='';pendingDraft=null">取消</button>
+      </div></div>`;
+    $('converseMsg').textContent = d.note||'';
+  }catch(e){ $('converseMsg').textContent = '异常: '+e; }
+}
+async function confirmDraft(){
+  if(!pendingDraft) return;
+  const res = await fetch('/api/rules/converse/confirm',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({draft:pendingDraft})});
+  const d = await res.json();
+  if(!res.ok){ alert('写入失败: '+(d.detail||JSON.stringify(d))); return; }
+  alert('✅ '+(d.applied?.detail||'已写入规则库'));
+  pendingDraft=null; $('draftBox').innerHTML=''; $('converseMsg').textContent='';
+  $('ruleIn').value='';
+  load();
+}
+function esc(s){ return String(s??'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
+load();
+</script>
+</body>
+</html>

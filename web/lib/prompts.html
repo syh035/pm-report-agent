@@ -1,0 +1,45 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>💬 提示词库 · PM Report Agent</title>
+<style>
+  :root { --primary:#4A6CF7; --bg:#F7F8FA; --card:#fff; --border:#E4E7EC; --text:#2D3142; --muted:#6B6B80; }
+  * { margin:0; padding:0; box-sizing:border-box; }
+  body { font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',system-ui,sans-serif; background:var(--bg); color:var(--text); line-height:1.6; padding:24px 32px; }
+  h1 { font-size:19px; margin-bottom:4px; }
+  .sub { font-size:13px; color:var(--muted); margin-bottom:18px; }
+  .back { text-decoration:none; color:var(--primary); font-size:13px; float:right; }
+  .card { background:var(--card); border:1px solid var(--border); border-radius:10px; padding:14px 16px; margin-bottom:14px; }
+  .card h3 { font-size:14px; margin-bottom:6px; }
+  .card .label { font-size:11px; color:var(--muted); margin:8px 0 4px; }
+  .card pre { background:var(--bg); border-radius:6px; padding:8px; font-size:11px; color:var(--muted); white-space:pre-wrap; max-height:160px; overflow:auto; }
+  .edited { color:#D97706; font-size:11px; margin-left:8px; }
+</style>
+</head>
+<body>
+<div class="sub" style="display:flex;justify-content:space-between;align-items:center;">
+  <div><h1>💬 提示词库</h1><div>全部 AI 提示词（system / user / few-shot 示例）· 在「设置」面板编辑</div></div>
+  <a class="back" href="/libraries.html" target="_blank">← 返回数据库中心</a>
+</div>
+<div id="list"></div>
+<script>
+async function load(){
+  const d = await (await fetch('/api/settings/prompts')).json();
+  const items = d.items||d.prompts||[];
+  const list = document.getElementById('list');
+  list.innerHTML = items.map(it=>{
+    const isEdited = it.modified ? '<span class="edited">(已修改)</span>' : '';
+    return `<div class="card"><h3>${esc(it.label||it.key)} ${isEdited}</h3>
+      <div class="label">SYSTEM</div><pre>${esc(it.system||'')}</pre>
+      <div class="label">USER</div><pre>${esc(it.user||'')}</pre>
+      ${it.examples&&it.examples.length?`<div class="label">示例 (${it.examples.length})</div><pre>${esc(it.examples.join('\n---\n'))}</pre>`:''}
+    </div>`;
+  }).join('');
+}
+function esc(s){ return String(s??'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
+load();
+</script>
+</body>
+</html>

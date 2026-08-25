@@ -295,6 +295,18 @@ def index():
         return f.read()
 
 
+@app.get("/libraries.html", response_class=HTMLResponse)
+def libraries_page():
+    """数据库中心：所有库一页列出，点击弹新窗口。"""
+    with open(os.path.join(WEB_DIR, "libraries.html"), "r", encoding="utf-8") as f:
+        return f.read()
+
+
+# 独立库页面（/lib/*.html，浏览器新标签页打开）
+if os.path.isdir(os.path.join(WEB_DIR, "lib")):
+    app.mount("/lib", StaticFiles(directory=os.path.join(WEB_DIR, "lib")), name="lib")
+
+
 if os.path.isdir(os.path.join(WEB_DIR, "static")):
     app.mount("/static", StaticFiles(directory=os.path.join(WEB_DIR, "static")), name="static")
 
@@ -1301,11 +1313,53 @@ def save_template(payload: TemplateIn):
         if not payload.blocks:
             raise HTTPException(400, "模板 blocks 不能为空")
         path = ReportGenerator.save_blocks_template(payload.blocks)
+        _append_template_history(fmt="blocks", blocks=payload.blocks)
         return {"ok": True, "path": path, "format": "blocks"}
     if not payload.content.strip():
         raise HTTPException(400, "模板内容不能为空")
     path = ReportGenerator.save_custom_template(payload.content)
+    _append_template_history(fmt="html", html=payload.content)
     return {"ok": True, "path": path, "format": "html"}
+
+
+TEMPLATE_HISTORY_FILE = os.path.join(BASE, "config", "template_history.json")
+
+
+def _append_template_history(fmt: str, html: str = "", blocks: Optional[list] = None) -> None:
+    """模板保存时归档版本快照（按日期），供模板库日历浏览历史版本。"""
+    try:
+        hist = []
+        if os.path.exists(TEMPLATE_HISTORY_FILE):
+            with open(TEMPLATE_HISTORY_FILE, "r", encoding="utf-8") as f:
+                hist = json.load(f) or []
+        hist.append({
+            "ts": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+            "fmt": fmt,
+            "html": (html or "")[:50000],
+            "blocks": blocks,
+        })
+        # 只保留最近 100 个版本
+        hist = hist[-100:]
+        os.makedirs(os.path.dirname(TEMPLATE_HISTORY_FILE), exist_ok=True)
+        with open(TEMPLATE_HISTORY_FILE, "w", encoding="utf-8") as f:
+            json.dump(hist, f, ensure_ascii=False, indent=1)
+    except Exception:
+        pass
+
+
+@app.get("/api/template/history")
+def template_history():
+    """模板版本历史（模板库日历浏览）。"""
+    if not os.path.exists(TEMPLATE_HISTORY_FILE):
+        return {"items": []}
+    try:
+        with open(TEMPLATE_HISTORY_FILE, "r", encoding="utf-8") as f:
+            hist = json.load(f) or []
+    except Exception:
+        hist = []
+    items = [{"ts": h.get("ts", ""), "fmt": h.get("fmt", ""),
+              "preview": (h.get("html") or "")[:200]} for h in reversed(hist)]
+    return {"items": items}
 
 
 @app.post("/api/template/reset")

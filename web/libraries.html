@@ -1,0 +1,75 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>📚 数据库中心 · PM Report Agent</title>
+<style>
+  :root { --primary:#4A6CF7; --bg:#F7F8FA; --card:#fff; --border:#E4E7EC; --text:#2D3142; --muted:#6B6B80; }
+  * { margin:0; padding:0; box-sizing:border-box; }
+  body { font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',system-ui,sans-serif; background:var(--bg); color:var(--text); line-height:1.6; padding:28px 32px; }
+  .topbar { display:flex; align-items:center; justify-content:space-between; margin-bottom:22px; }
+  .topbar h1 { font-size:20px; }
+  .topbar .sub { font-size:13px; color:var(--muted); }
+  .grid { display:grid; grid-template-columns:repeat(auto-fill,minmax(260px,1fr)); gap:16px; }
+  .lib-card { background:var(--card); border:1px solid var(--border); border-radius:12px; padding:18px; cursor:pointer; transition:.15s; }
+  .lib-card:hover { border-color:var(--primary); box-shadow:0 4px 14px rgba(74,108,247,.12); transform:translateY(-2px); }
+  .lib-card .icon { font-size:26px; margin-bottom:8px; }
+  .lib-card h3 { font-size:15px; margin-bottom:6px; }
+  .lib-card p { font-size:12px; color:var(--muted); margin-bottom:10px; min-height:34px; }
+  .lib-card .count { font-size:12px; color:var(--primary); font-weight:600; }
+  .lib-card .badge { display:inline-block; font-size:10px; background:#EEF2FF; color:var(--primary); border-radius:8px; padding:1px 8px; margin-left:6px; }
+  .back { text-decoration:none; color:var(--primary); font-size:13px; }
+  .hint { font-size:12px; color:var(--muted); margin-top:20px; }
+</style>
+</head>
+<body>
+<div class="topbar">
+  <div>
+    <h1>📚 数据库中心</h1>
+    <div class="sub">全部数据库 / 规则库 / 配置库，点击卡片在<b>新窗口</b>打开查看</div>
+  </div>
+  <a class="back" href="/" target="_blank">← 返回主面板</a>
+</div>
+<div class="grid" id="libGrid"></div>
+<div class="hint">💡 每个库独立页面，可多开对比；「原始数据库」按日期（日历）分类，有数据的日期可点击查看当天提交的资料。</div>
+<script>
+const LIBS = [
+  { key:'sources', icon:'📦', name:'原始数据库', desc:'上传的原始文件，按日期(日历)+资料分类归档，可下载原文', url:'/lib/sources.html', badge:'日历' },
+  { key:'items',   icon:'🗂', name:'分类数据仓', desc:'任务/风险/里程碑/指标/决策等分类数据（SQLite）', url:'/lib/items.html', badge:'' },
+  { key:'reports', icon:'📄', name:'文稿库', desc:'生成/保存的日周报，按日期归档，可搜索、汇总、导出', url:'/lib/reports.html', badge:'日历' },
+  { key:'templates', icon:'📋', name:'模板库', desc:'周报模板（含自定义模块/占位符），上传与编辑', url:'/lib/templates.html', badge:'日历' },
+  { key:'rules',   icon:'⚙️', name:'规则库', desc:'规则阈值/忽略词/列名/状态词映射 + AI 工作要求（对话式添加）', url:'/lib/rules.html', badge:'对话' },
+  { key:'blocks',  icon:'🧩', name:'自定义 Block 库', desc:'AI 提示词块 / 公式计算块，可保存复用', url:'/lib/blocks.html', badge:'' },
+  { key:'prompts', icon:'💬', name:'提示词库', desc:'全部 AI 提示词（system/user/few-shot），面板可编辑', url:'/lib/prompts.html', badge:'' },
+  { key:'tokens',  icon:'🔢', name:'Token 用量', desc:'AI 调用 Token 统计与缓存命中情况', url:'/lib/tokens.html', badge:'' },
+];
+function esc(s){ return String(s??'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
+async function loadCounts(){
+  const counts = {};
+  try{
+    const [sources, items, history, rules] = await Promise.all([
+      fetch('/api/sources').then(r=>r.json()).catch(()=>({items:[]})),
+      fetch('/api/items?limit=1').then(r=>r.json()).catch(()=>({items:[]})),
+      fetch('/api/history').then(r=>r.json()).catch(()=>({items:[]})),
+      fetch('/api/rules').then(r=>r.json()).catch(()=>({rules:{}})),
+    ]);
+    counts.sources = (sources.items||[]).length;
+    counts.items = Object.values(sources.summary||{}).reduce((a,b)=>a+b,0) || '—';
+    counts.reports = (history.items||history||[]).length || '—';
+    counts.rules = Object.keys(rules.rules||{}).length;
+    counts.templates = 1;
+  }catch(e){}
+  const grid = document.getElementById('libGrid');
+  grid.innerHTML = LIBS.map(l=>`
+    <div class="lib-card" onclick="window.open('${l.url}','_blank')">
+      <div class="icon">${l.icon}</div>
+      <h3>${l.name}${l.badge?`<span class="badge">${l.badge}</span>`:''}</h3>
+      <p>${esc(l.desc)}</p>
+      <div class="count">${counts[l.key]!==undefined?counts[l.key]+' 项':'打开查看'}</div>
+    </div>`).join('');
+}
+loadCounts();
+</script>
+</body>
+</html>

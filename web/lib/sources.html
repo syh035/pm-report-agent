@@ -1,0 +1,134 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>📦 原始数据库 · PM Report Agent</title>
+<style>
+  :root { --primary:#4A6CF7; --bg:#F7F8FA; --card:#fff; --border:#E4E7EC; --text:#2D3142; --muted:#6B6B80; }
+  * { margin:0; padding:0; box-sizing:border-box; }
+  body { font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',system-ui,sans-serif; background:var(--bg); color:var(--text); line-height:1.6; padding:24px 32px; }
+  h1 { font-size:19px; margin-bottom:4px; }
+  .sub { font-size:13px; color:var(--muted); margin-bottom:18px; }
+  .back { text-decoration:none; color:var(--primary); font-size:13px; float:right; }
+  .layout { display:flex; gap:20px; flex-wrap:wrap; }
+  .cal-panel { background:var(--card); border:1px solid var(--border); border-radius:12px; padding:18px; flex:1; min-width:340px; max-width:440px; }
+  .list-panel { background:var(--card); border:1px solid var(--border); border-radius:12px; padding:18px; flex:2; min-width:320px; }
+  .cal-head { display:flex; align-items:center; justify-content:space-between; margin-bottom:12px; }
+  .cal-head button { background:#EEF2FF; border:none; color:var(--primary); border-radius:6px; padding:3px 12px; cursor:pointer; font-size:14px; }
+  .cal-head .ym { font-weight:700; font-size:15px; }
+  .cal-grid { display:grid; grid-template-columns:repeat(7,1fr); gap:4px; }
+  .cal-grid .dow { text-align:center; font-size:11px; color:var(--muted); padding:4px 0; }
+  .cal-day { text-align:center; padding:7px 0; border-radius:8px; font-size:13px; cursor:pointer; position:relative; }
+  .cal-day.empty { cursor:default; }
+  .cal-day.other { color:#C9CCD6; }
+  .cal-day.has { background:#EEF2FF; font-weight:600; color:var(--primary); }
+  .cal-day.has::after { content:''; position:absolute; bottom:3px; left:50%; transform:translateX(-50%); width:4px; height:4px; border-radius:50%; background:var(--primary); }
+  .cal-day.sel { background:var(--primary); color:#fff; }
+  .cal-day.sel::after { background:#fff; }
+  .item { display:flex; align-items:center; gap:10px; padding:9px 6px; border-bottom:1px solid var(--border); font-size:13px; }
+  .item:last-child { border-bottom:none; }
+  .item .ic { font-size:16px; }
+  .item .name { flex:1; }
+  .item .meta { font-size:11px; color:var(--muted); }
+  .item a { color:var(--primary); text-decoration:none; font-size:12px; }
+  .empty-tip { color:var(--muted); font-size:13px; padding:20px 6px; }
+  .group-tag { display:inline-block; background:#F0F2F5; border-radius:8px; padding:1px 8px; font-size:11px; color:var(--muted); }
+</style>
+</head>
+<body>
+<div class="sub" style="display:flex;justify-content:space-between;align-items:center;">
+  <div><h1>📦 原始数据库</h1><div>上传的原始文件 · 按日期分类（日历）· 点击有数据的日期查看当天提交的资料</div></div>
+  <a class="back" href="/libraries.html" target="_blank">← 返回数据库中心</a>
+</div>
+<div class="layout">
+  <div class="cal-panel">
+    <div class="cal-head">
+      <button onclick="calMove(-1)">‹</button>
+      <span class="ym" id="calYM"></span>
+      <button onclick="calMove(1)">›</button>
+    </div>
+    <div class="cal-grid" id="calGrid"></div>
+    <div style="font-size:11px;color:var(--muted);margin-top:10px;">● 有数据的日期可点击，查看当天提交的资料</div>
+  </div>
+  <div class="list-panel">
+    <h3 style="font-size:14px;margin-bottom:10px;" id="listTitle">🗓 当天提交的资料</h3>
+    <div id="dayList"></div>
+  </div>
+</div>
+<script>
+const $ = id => document.getElementById(id);
+let curYear = new Date().getFullYear(), curMonth = new Date().getMonth()+1;
+let allItems = [], byDate = {}, selDate = '';
+
+async function loadData(){
+  try{
+    const d = await (await fetch('/api/sources')).json();
+    allItems = d.items||[];
+  }catch(e){ allItems = []; }
+  byDate = {};
+  for(const it of allItems){
+    const day = (it.uploaded_at||'').slice(0,10);
+    (byDate[day] = byDate[day]||[]).push(it);
+  }
+  renderCal(); 
+  const today = new Date();
+  const todayKey = `${today.getFullYear()}-${String(today.getMonth()+1).padStart(2,'0')}-${String(today.getDate()).padStart(2,'0')}`;
+  selectDate(byDate[todayKey] ? todayKey : Object.keys(byDate).sort().pop() || '');
+}
+function calMove(delta){
+  curMonth += delta;
+  if(curMonth < 1){ curMonth = 12; curYear--; }
+  if(curMonth > 12){ curMonth = 1; curYear++; }
+  renderCal();
+}
+function renderCal(){
+  $('calYM').textContent = `${curYear} 年 ${curMonth} 月`;
+  const first = new Date(curYear, curMonth-1, 1);
+  const daysInMonth = new Date(curYear, curMonth, 0).getDate();
+  const startDow = first.getDay();
+  let html = ['日','一','二','三','四','五','六'].map(d=>`<div class="dow">${d}</div>`).join('');
+  for(let i=0;i<startDow;i++) html += '<div class="cal-day empty"></div>';
+  for(let d=1; d<=daysInMonth; d++){
+    const key = `${curYear}-${String(curMonth).padStart(2,'0')}-${String(d).padStart(2,'0')}`;
+    const has = byDate[key] && byDate[key].length;
+    const sel = key===selDate;
+    html += `<div class="cal-day ${has?'has':''} ${sel?'sel':''}" onclick="selectDate('${key}')" title="${has?`${byDate[key].length} 份资料`:''}">${d}</div>`;
+  }
+  $('calGrid').innerHTML = html;
+}
+function selectDate(key){
+  selDate = key;
+  renderCal();
+  const list = byDate[key]||[];
+  $('listTitle').textContent = `🗓 ${key||'—'} 提交的资料（${list.length}）`;
+  if(!list.length){ $('dayList').innerHTML = '<div class="empty-tip">当天没有提交资料</div>'; return; }
+  $('dayList').innerHTML = list.map(it=>`
+    <div class="item">
+      <span class="ic">${it.has_dataset?'🗂':'📄'}</span>
+      <span class="name" title="${esc(it.filename)}">${esc(it.filename)} ${it.n_sheets?`<span class="group-tag">${it.n_sheets}表</span>`:''}</span>
+      <span class="meta">${esc((it.uploaded_at||'').slice(5,16))}</span>
+      <a href="#" onclick="event.preventDefault();viewSource('${it.id}')">查看</a>
+      <a href="/api/sources/${it.id}/download" download>⬇</a>
+    </div>`).join('');
+}
+function esc(s){ return String(s??'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
+function viewSource(sid){
+  const w = window.open('', '_blank');
+  fetch('/api/sources/'+sid).then(r=>r.json()).then(d=>{
+    w.document.write('<html><head><meta charset="utf-8"><title>源数据详情</title><style>body{font-family:sans-serif;padding:20px;}table{border-collapse:collapse;width:100%}td,th{border:1px solid #ddd;padding:6px 10px;font-size:12px;text-align:left}</style></head><body>');
+    w.document.write(`<h3>📄 ${esc(d.source?.filename||'')}</h3>`);
+    for(const sh of (d.sheets||[])){
+      w.document.write(`<h4>🧾 ${esc(sh.name)}</h4><table><tr><th>原文行</th><th>任务</th><th>进度</th><th>状态</th></tr>`);
+      for(const t of (sh.tasks||[])){
+        w.document.write(`<tr><td>${esc(t.source_line||'-')}</td><td>${esc(t.name)}</td><td>${t.progress!=null?t.progress+'%':'-'}</td><td>${esc(t.status||'')}</td></tr>`);
+      }
+      w.document.write('</table>');
+    }
+    w.document.write('</body></html>'); w.document.close();
+  }).catch(()=>w.close());
+}
+loadData();
+</script>
+</body>
+</html>

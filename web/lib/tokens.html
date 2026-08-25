@@ -1,0 +1,64 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>🔢 Token 用量 · PM Report Agent</title>
+<style>
+  :root { --primary:#4A6CF7; --bg:#F7F8FA; --card:#fff; --border:#E4E7EC; --text:#2D3142; --muted:#6B6B80; }
+  * { margin:0; padding:0; box-sizing:border-box; }
+  body { font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',system-ui,sans-serif; background:var(--bg); color:var(--text); line-height:1.6; padding:24px 32px; }
+  h1 { font-size:19px; margin-bottom:4px; }
+  .sub { font-size:13px; color:var(--muted); margin-bottom:18px; }
+  .back { text-decoration:none; color:var(--primary); font-size:13px; float:right; }
+  .cards { display:flex; gap:14px; margin-bottom:18px; flex-wrap:wrap; }
+  .stat { background:var(--card); border:1px solid var(--border); border-radius:10px; padding:14px 20px; min-width:130px; }
+  .stat b { font-size:20px; color:var(--primary); display:block; }
+  .stat span { font-size:12px; color:var(--muted); }
+  table { width:100%; border-collapse:collapse; background:var(--card); border-radius:10px; overflow:hidden; }
+  th { background:#F0F2F5; text-align:left; font-size:11px; padding:8px 10px; color:var(--muted); }
+  td { border-top:1px solid var(--border); padding:7px 10px; font-size:12px; }
+  .opt { background:var(--card); border:1px solid var(--border); border-radius:10px; padding:14px 18px; margin-top:16px; font-size:13px; }
+  .opt h3 { font-size:14px; margin-bottom:8px; }
+  .opt li { margin-left:18px; margin-bottom:4px; }
+</style>
+</head>
+<body>
+<div class="sub" style="display:flex;justify-content:space-between;align-items:center;">
+  <div><h1>🔢 Token 用量</h1><div>AI 调用统计与缓存命中 · 成本估算</div></div>
+  <a class="back" href="/libraries.html" target="_blank">← 返回数据库中心</a>
+</div>
+<div class="cards" id="stats"></div>
+<div class="opt">
+  <h3>💡 Token 优化要点（已内置）</h3>
+  <ul>
+    <li><b>磁盘缓存</b>：相同输入（模型+消息）命中缓存 → 0 Token 重复调用（当前命中 <span id="hits">0</span> 次）</li>
+    <li><b>输入压缩</b>：数据集/模板文本自动截断到合理长度；只传必要板块</li>
+    <li><b>输出控制</b>：max_tokens 限制输出长度，避免超长浪费</li>
+    <li><b>温度控制</b>：结构化任务用低温度（0~0.3），减少重试</li>
+    <li><b>成本估算</b>：DeepSeek-chat 约 ¥1~2/百万输入 token、¥2~3/百万输出 token</li>
+  </ul>
+</div>
+<table>
+  <thead><tr><th>时间</th><th>用途</th><th>输入</th><th>输出</th><th>缓存</th></tr></thead>
+  <tbody id="rows"></tbody>
+</table>
+<script>
+async function load(){
+  const d = await (await fetch('/api/settings/tokens')).json();
+  document.getElementById('stats').innerHTML = `
+    <div class="stat"><b>${d.total_in||0}</b><span>输入 tokens</span></div>
+    <div class="stat"><b>${d.total_out||0}</b><span>输出 tokens</span></div>
+    <div class="stat"><b>${d.calls||0}</b><span>AI 调用次数</span></div>
+    <div class="stat"><b>${d.cache_hits||0}</b><span>缓存命中</span></div>`;
+  document.getElementById('hits').textContent = d.cache_hits||0;
+  const rows = d.entries||[];
+  document.getElementById('rows').innerHTML = rows.length ? rows.map(r=>`
+    <tr><td>${esc(r.ts||'')}</td><td>${esc(r.purpose||'')}</td><td>${r.input_tokens||0}</td><td>${r.output_tokens||0}</td><td>${r.cached?'✅':'—'}</td></tr>`).join('')
+    : '<tr><td colspan="5" style="color:var(--muted);padding:16px;">暂无 AI 调用记录（使用过 AI 功能后显示）</td></tr>';
+}
+function esc(s){ return String(s??'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
+load();
+</script>
+</body>
+</html>
