@@ -157,15 +157,6 @@
     <!-- 看板面板 -->
     <div class="panel" id="panel-dashboard">
       <div class="card" style="margin-bottom:14px;">
-        <div class="row" style="gap:8px;flex-wrap:wrap;">
-          <span style="font-size:13px;font-weight:600;">🤖 Agent 一句话指令</span>
-          <input id="agentInput" placeholder="如：生成周报；列出风险；看板概览；生成日报 项目：支付项目" style="flex:1;min-width:220px" onkeydown="if(event.key==='Enter')runAgent()">
-          <button class="btn btn-primary" onclick="runAgent()">执行</button>
-        </div>
-        <div id="agentLog" style="font-size:11px;color:var(--muted);margin-top:6px;"></div>
-        <div id="agentResult" class="report-content" style="display:none;margin-top:8px;"></div>
-      </div>
-      <div class="card" style="margin-bottom:14px;">
         <div class="row" style="gap:10px;flex-wrap:wrap;">
           <span style="font-size:13px;font-weight:600;margin-right:4px;">看板（AI 提取条目）</span>
           <span id="dashMeta" style="font-size:12px;color:var(--muted);margin-left:auto;"></span>
@@ -805,24 +796,6 @@ async function generateReport(){
     $('genMsg').className='msg ok';
     $('genMsg').textContent = d.note + `（耗时 ${((Date.now()-t0)/1000).toFixed(1)}s）`;
   }catch(e){ $('genMsg').className='msg err'; $('genMsg').textContent='生成失败:'+e.message; }
-}
-// —— 🤖 Agent 一句话入口 ——
-async function runAgent(){
-  const instr = $('agentInput').value.trim();
-  if(!instr){ return; }
-  $('agentLog').textContent='执行中…';
-  try{
-    const res = await fetch('/api/agent/run',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({instruction:instr})});
-    const d = await res.json();
-    if(!res.ok){ $('agentLog').textContent='执行失败：'+(d.detail||''); return; }
-    $('agentLog').innerHTML = `意图：<b>${esc(d.intent)}</b>（${d.ai_used?'AI 识别':'规则回退'}） ｜ 执行：` +
-      (d.log||[]).map(l=>`${esc(l.step)}→${esc(l.tool)}`).join(' › ');
-    if(d.report){
-      $('agentResult').innerHTML = d.report;
-      $('agentResult').style.display='block';
-      state.lastReport = {report:d.report, project:d.project||'Agent', stats:null};
-    }
-  }catch(e){ $('agentLog').textContent='执行失败：'+e.message; }
 }
 async function exportReport(format){
   if(!state.lastReport){alert('请先生成周报');return;}

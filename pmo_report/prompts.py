@@ -63,21 +63,9 @@ PROMPT_DEFAULTS: Dict[str, Dict] = {
                  "{task_input}": "用户需求或规则文档"},
         "examples": [],
     },
-    "ai_intent": {
-        "label": "意图 AI（看板/Agent 一句话入口）",
-        "system": "你是意图识别助手，只输出 JSON。",
-        "user": (
-            "从用户指令中识别意图与参数。\n"
-            "意图（intent）∈ generate_report（生成周报/日报）、dashboard（看板概览）、risks（列出风险/预警）、help（帮助）。\n"
-            "参数（params）可含：project_name（项目名，可为空）、report_type（week/day，生成时用）、period（周期/日期，可为空）。\n"
-            "只输出 JSON：{\"intent\":\"...\",\"params\":{...}}，不要其他文字。\n\n指令：{instruction}"
-        ),
-        "docs": {"{instruction}": "用户的一句话指令"},
-        "examples": [],
-    },
 }
 
-# ---------------- 旧提示词 → 新 4 类映射（兼容旧调用方） ----------------
+# ---------------- 旧提示词 → 新 3 类映射（兼容旧调用方） ----------------
 # key: (新键, task_type, 该任务的 user 指令前缀)
 LEGACY_PROMPT_MAP: Dict[str, tuple] = {
     "report_overview": ("ai_generation", "overview",
@@ -126,8 +114,6 @@ LEGACY_PROMPT_MAP: Dict[str, tuple] = {
     "rule_batch_intent": ("ai_rules", "batch",
         "从规则文档中批量提取规则为 JSON 数组，每项含 type/title/description/value/key；"
         "判断依据同单条；数值阈值 key 尽量填 delay_days_danger/slow_progress_pct/risk_near_end_days。\n{force_hint}"),
-    "agent_intent": ("ai_intent", "intent",
-        ""),
     "dialogue_finalize": ("ai_rules", "finalize_dialogue",
         "根据完整对话记录按【总结要求】整理最终结果，只提取用户明确确认的内容，不要编造；只输出要求的格式（JSON 或 HTML）。"),
 }
@@ -137,7 +123,6 @@ PROMPT_TASK_TYPES: Dict[str, List[str]] = {
     "ai_analysis": ["structure", "analyze", "review", "refine"],
     "ai_generation": ["week_report", "day_report", "overview", "template_parse", "template_tune"],
     "ai_rules": ["single", "batch", "finalize_dialogue"],
-    "ai_intent": ["intent"],
 }
 
 
@@ -361,14 +346,13 @@ def reset_prompts(keys: Optional[List[str]] = None) -> None:
         pass
 
 
-# 提示词 4 类分组（前端展开式用途选择用）
+# 提示词 3 类分组（前端展开式用途选择用）
 PROMPT_PURPOSE: Dict[str, str] = {
     "ai_analysis": "分析 AI",
     "ai_generation": "生成 AI",
     "ai_rules": "规则配置 AI",
-    "ai_intent": "意图 AI",
 }
-HIDDEN_PROMTPTS = set()   # 4 类结构下无隐藏项
+HIDDEN_PROMTPTS = set()   # 3 类结构下无隐藏项
 
 
 def prompts_status() -> Dict:
