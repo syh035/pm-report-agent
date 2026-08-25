@@ -570,15 +570,32 @@ function renderAiItems(items, box, title){
       // 长文本字段（>60 字）不放进单元格，改整段展示
       const longKeys = keys.filter(k=>arr.some(it=>String(((it.payload||{}).fields||{})[k] ?? '').length>60));
       const shortKeys = keys.filter(k=>!longKeys.includes(k));
+      // 重点关注标记字段：focus/focus_reason 单独成列，放在最前
+      const focusKey = shortKeys.find(k=>k==='focus'||k==='是否重点关注'||k==='重点关注') || null;
+      const reasonKey = shortKeys.find(k=>k==='focus_reason'||k==='重点关注原因') || null;
+      const colKeys = [focusKey, ...shortKeys.filter(k=>k!==focusKey&&k!==reasonKey), reasonKey].filter(Boolean);
+      const colLabel = k=> k==='focus'?'是否重点关注'
+        : k==='focus_reason'?'重点关注原因'
+        : k==='是否重点关注'||k==='重点关注'?'是否重点关注'
+        : k==='重点关注原因'?'重点关注原因' : k;
       const th = `<th style="border:1px solid var(--border);padding:5px 8px;font-size:11px;text-align:left;background:${color};color:#fff;">名称</th>`
-        + shortKeys.map(k=>`<th style="border:1px solid var(--border);padding:5px 8px;font-size:11px;text-align:left;background:${color};color:#fff;">${esc(k)}</th>`).join('');
+        + colKeys.map(k=>`<th style="border:1px solid var(--border);padding:5px 8px;font-size:11px;text-align:left;background:${color};color:#fff;">${esc(colLabel(k))}</th>`).join('');
       const rows = arr.map(it=>{
         const p = it.payload||{};
         const fields = p.fields && Object.keys(p.fields).length ? p.fields
           : Object.fromEntries(Object.entries(p).filter(([k])=>!['section','source_note','fields'].includes(k)));
-        const tds = shortKeys.map(k=>{
+        const isFocus = /^是$|重点|高|严重|关注|偏慢|延迟|滞后|风险/.test(String(fields['focus'] ?? fields['是否重点关注'] ?? fields['重点关注'] ?? ''));
+        const tds = colKeys.map(k=>{
           const v = fields[k];
           const s = String(v ?? '');
+          if(k===focusKey && focusKey){
+            return `<td style="border:1px solid var(--border);padding:5px 8px;font-size:12px;">${isFocus
+              ? '<span style="display:inline-block;background:#A33A37;color:#fff;font-size:10px;border-radius:8px;padding:1px 8px;font-weight:600;">★ 重点关注</span>'
+              : '<span style="color:var(--muted);font-size:11px;">否</span>'}</td>`;
+          }
+          if(k===reasonKey && reasonKey){
+            return `<td style="border:1px solid var(--border);padding:5px 8px;font-size:11px;color:var(--muted);max-width:260px;">${s?esc(s.slice(0,60))+(s.length>60?'…':''):'—'}</td>`;
+          }
           return `<td style="border:1px solid var(--border);padding:5px 8px;font-size:12px;">${s?esc(s.slice(0,40))+(s.length>40?'…':''):'<span style="color:var(--muted)">—</span>'}</td>`;
         }).join('');
         const longTxt = longKeys.map(k=>{
@@ -881,11 +898,22 @@ function dashItemFields(p){
 }
 function dashTag(p){
   const f = (p&&p.fields)||{};
-  const risk = f['风险等级']||f['risk_level']||f['风险']||'';
+  // 统一重点关注标记（分析 AI 按处理约定输出 focus=是）
+  const focus = f['focus']||f['是否重点关注']||f['重点关注']||'';
+  if(/^是$|重点/.test(String(focus))) return `<span class="dash-tag" style="background:#A33A37">★ 重点关注</span>`;
+  const risk = f['风险等级']||f['risk_level']||f['level']||f['风险']||'';
   if(/高|严重/.test(String(risk))) return `<span class="dash-tag" style="background:#A33A37">高风险</span>`;
   if(/中|关注|警告/.test(String(risk))) return `<span class="dash-tag" style="background:#E65100">关注</span>`;
   if(/完成|达标/.test(String(f['状态']||f['status']||''))) return `<span class="dash-tag" style="background:#2E7D32">完成</span>`;
   return '';
+}
+// 判断条目是否重点关注（focus=是，或风险等级高/严重）
+function isFocusItem(it){
+  const f = (it&&it.payload&&it.payload.fields)||{};
+  const focus = f['focus']||f['是否重点关注']||f['重点关注']||'';
+  if(/^是$|重点/.test(String(focus))) return true;
+  const risk = f['风险等级']||f['risk_level']||f['level']||f['风险']||'';
+  return /高|严重/.test(String(risk));
 }
 function dashKpiHtml(label, value, sub, color){
   return `<div class="dash-kpi"><div class="l">${esc(label)}</div>
@@ -909,16 +937,39 @@ async function loadDashboard(){
       $('dashGroups').innerHTML = '';
       return;
     }
-    // KPI 行：总数 + 各分类计数（分类用其主色）
+    // KPI 行：总数 + 重点关注 + 各分类计数（分类用其主色）
+    let focusCount = 0;
+    kinds.forEach(k=>(k.sections||[]).forEach(s=>s.items.forEach(it=>{ if(isFocusItem(it)) focusCount++; })));
     const kpiOrder = ['metric','task','risk','milestone','decision'];
     let kpiHtml2 = dashKpiHtml('条目总数', total, srcCount+' 个源文件', 'var(--primary)');
+    kpiHtml2 += dashKpiHtml('重点关注', focusCount, '按分析约定命中', '#A33A37');
     kpiOrder.forEach(kind=>{
       const k = kinds.find(x=>x.kind===kind);
       if(k && k.total>0) kpiHtml2 += dashKpiHtml(KIND_LABEL[kind]||kind, k.total, '', KIND_COLOR[kind]||'var(--text)');
     });
     kpiBox.innerHTML = kpiHtml2;
+    // 重点关注专区：把 focus=是/高风险 的条目汇总置顶（跨分类）
+    const focusItems = [];
+    kinds.forEach(k=>(k.sections||[]).forEach(s=>s.items.forEach(it=>{ if(isFocusItem(it)) focusItems.push({...it, _kind:k.kind, _label:k.label}); })));
+    const focusZone = focusItems.length ? `<div class="dash-kind" style="border-color:#A33A37;">
+      <div class="dash-kind-head">
+        <span class="dash-kind-dot" style="background:#A33A37"></span>
+        <b>★ 重点关注</b>
+        <span class="cnt">${focusItems.length} 条</span>
+      </div>
+      <div class="dash-items">
+        ${focusItems.map(it=>{
+          const p = it.payload||{};
+          const reason = (p.fields||{})['focus_reason']||(p.fields||{})['重点关注原因']||'';
+          return `<div class="dash-item" style="--accent:#A33A37">
+            <div class="nm">${esc(it._label||'')} · ${esc(it.name)}${dashTag(p)}</div>
+            <div class="fs">${reason?`<span class="k">原因</span> <b>${esc(String(reason).slice(0,60))}</b>`:'<span class="k">按分析约定命中</span>'}</div>
+          </div>`;
+        }).join('')}
+      </div>
+    </div>` : '';
     // 分类区块：每个分类一个圆角卡，板块为小节，条目为字段自适应卡片
-    gBox.innerHTML = kinds.map(k=>{
+    gBox.innerHTML = focusZone + kinds.map(k=>{
       const color = KIND_COLOR[k.kind]||'#6B7280';
       const secHtml = (k.sections||[]).map(s=>`
         <div class="dash-sec" style="color:var(--muted)">${esc(s.name||'（未分板块）')}</div>

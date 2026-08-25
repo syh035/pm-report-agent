@@ -33,6 +33,12 @@ def build_processing_rules(rules: Dict) -> List[str]:
     ca = rules.get("column_aliases") or {}
     if ca:
         lines.append("- 表头列名映射：" + "、".join(f"「{k}」→「{v}」" for k, v in ca.items()))
+    # 统一重点关注标记：命中任一约定的条目必须带 focus 字段，供数据面板/看板统计
+    if any(lines):
+        lines.append(
+            "- 输出约定：凡命中以上任一约定的条目，fields 中必须输出 \"focus\": \"是\"，"
+            "并用 \"focus_reason\" 一句话说明原因；未命中任何约定的条目输出 \"focus\": \"否\"（focus_reason 可留空）"
+        )
     return lines
 
 
