@@ -222,8 +222,9 @@ def render_user(entry: Dict, data: Dict[str, str]) -> str:
         if d.get("instruction"):
             parts.append("【用户指令】\n" + d["instruction"])
         extra = []
-        for k in ("requirements", "generation_requirements", "placeholders", "force_hint",
-                  "finalize_hint", "transcript", "report_type", "tune_request", "template_html"):
+        for k in ("requirements", "generation_requirements", "processing_rules",
+                  "placeholders", "force_hint", "finalize_hint", "transcript",
+                  "report_type", "tune_request", "template_html"):
             if k in d and d[k]:
                 # 模板含对应占位符则保留直接替换，否则进其它参数
                 if "{" + k + "}" in text:
@@ -236,7 +237,7 @@ def render_user(entry: Dict, data: Dict[str, str]) -> str:
         consumed = {"template_text", "template", "stats_json", "data_json", "dataset_text",
                     "analysis", "document_text", "tasks_json", "candidate_text",
                     "source_text", "rule_text", "requirements",
-                    "generation_requirements", "placeholders",
+                    "generation_requirements", "processing_rules", "placeholders",
                     "finalize_hint", "transcript", "report_type", "tune_request", "template_html"}
         keep = {k for k in ("instruction", "force_hint") if "{" + k + "}" in text}
         consumed -= keep

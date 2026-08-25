@@ -165,17 +165,7 @@
       </div>
       <div class="card" style="margin-bottom:14px;">
         <div class="row" style="gap:10px;flex-wrap:wrap;">
-          <span style="font-size:13px;font-weight:600;margin-right:4px;">看板</span>
-          <div style="display:flex;gap:4px;">
-            <button class="btn btn-primary" id="dashViewAll" style="font-size:12px;padding:5px 12px" onclick="setDashView('all')">全部</button>
-            <button class="btn btn-outline" id="dashViewGroups" style="font-size:12px;padding:5px 12px" onclick="setDashView('groups')">按分组</button>
-          </div>
-          <span style="width:1px;height:22px;background:var(--border);"></span>
-          <div style="display:flex;gap:4px;">
-            <button class="btn btn-primary" id="dashPer4" style="font-size:12px;padding:5px 12px" onclick="setDashPer('recent4')">近4期</button>
-            <button class="btn btn-outline" id="dashPer12" style="font-size:12px;padding:5px 12px" onclick="setDashPer('recent12')">近12期</button>
-            <button class="btn btn-outline" id="dashPerAll" style="font-size:12px;padding:5px 12px" onclick="setDashPer('all')">全部</button>
-          </div>
+          <span style="font-size:13px;font-weight:600;margin-right:4px;">看板（AI 提取条目）</span>
           <span id="dashMeta" style="font-size:12px;color:var(--muted);margin-left:auto;"></span>
         </div>
       </div>
@@ -1265,103 +1255,40 @@ async function loadTrend(){
 
 // ============ 看板（按 skill 设计语言：KPI卡带涨跌/迷你趋势、升即坏反色、分组独立成区） ============
 const GOOD = '#4A7A1E', BAD = '#A33A37', GRAY = '#9AA0B5';
-let dashState = {view:'all', per:'recent4'};
-function setDashView(v){
-  dashState.view = v;
-  ['all','groups'].forEach(x=>{
-    const b = x==='all' ? $('dashViewAll') : $('dashViewGroups');
-    b.className = x===v ? 'btn btn-primary' : 'btn btn-outline';
-  });
-  loadDashboard();
-}
-function setDashPer(p){
-  dashState.per = p;
-  [['recent4','dashPer4'],['recent12','dashPer12'],['all','dashPerAll']].forEach(([k,id])=>{
-    $(id).className = k===p ? 'btn btn-primary' : 'btn btn-outline';
-  });
-  loadDashboard();
-}
-function dashSeries(trend, name, key){
-  // 取某项目/分组的序列（历史是新的在前 → 翻转为旧→新）
-  const f = (trend||[]).filter(e=>!name || e.name===name);
-  return f.map(e=>e[key]).filter(v=>v!=null).reverse();
-}
-function sparkSvg(vals, color, w=84, h=22){
-  if(!vals || vals.length<2) return '';
-  const min = Math.min(...vals), max = Math.max(...vals), span = Math.max(max-min, 1);
-  const pts = vals.slice(-10).map((v,i)=>`${(i/(Math.min(vals.length,10)-1))*w},${h-2-((v-min)/span)*(h-4)}`).join(' ');
-  return `<svg width="${w}" height="${h}" style="display:block;margin:4px auto 0;"><polyline points="${pts}" fill="none" stroke="${color}" stroke-width="1.5"/></svg>`;
-}
-function deltaBadge(series, inverse){
-  if(!series || series.length<2) return `<span style="font-size:10px;color:${GRAY}">—</span>`;
-  const d = series[series.length-1] - series[series.length-2];
-  const up = d > 0.05, down = d < -0.05;
-  const good = up !== inverse;   // 升即坏：上升=坏
-  let color = GRAY, txt = '持平';
-  if(up){ color = good?GOOD:BAD; txt = '↑'+(inverse?'':'+')+d.toFixed(1); }
-  if(down){ color = good?GOOD:BAD; txt = '↓'+Math.abs(d).toFixed(1); }
-  return `<span style="font-size:10px;font-weight:600;color:${color};">${txt}</span>`;
-}
-function kpiCard(label, value, sub, series, inverse, sparkColor){
-  return `<div class="kpi" style="min-width:110px;">
-    <div style="font-size:20px;font-weight:700;color:var(--primary);">${value}</div>
-    <div style="font-size:11px;color:var(--muted);margin-top:2px;">${label}</div>
-    ${sub?`<div style="font-size:10px;color:var(--muted);">${sub}</div>`:''}
-    <div style="display:flex;justify-content:center;gap:6px;align-items:center;">${deltaBadge(series, inverse)}</div>
-    ${sparkSvg(series, sparkColor||GOOD)}
-  </div>`;
-}
-function dashAlerts(tasks){
-  const seen = {}, risks = (tasks||[]).filter(t=>t.risk_level && t.risk_level!=='正常' && !seen[t.name] && (seen[t.name]=1));
-  if(!risks.length) return '<div style="font-size:12px;color:var(--muted);">✅ 无风险/预警项</div>';
-  return risks.slice(0,12).map(t=>{
-    const c = t.risk_level==='风险' ? riskColor('风险') : riskColor('关注');
-    return `<div class="risk-item" style="border-left-color:${c};"><span class="pill" style="background:${c}">${t.risk_level}</span> <b>${esc(t.name)}</b> ${t.risk_reason?`<span style="color:var(--muted)">：${esc(t.risk_reason)}</span>`:''}</div>`;
-  }).join('');
-}
-function dashTable(tasks){
-  const rows = (tasks||[]).slice(0,10).map(t=>
-    `<tr><td style="border:1px solid var(--border);padding:5px 8px;font-size:12px;">${t.is_critical?'🔑 ':''}${esc(t.name)}</td>
-     <td style="border:1px solid var(--border);padding:5px 8px;font-size:12px;text-align:right;font-variant-numeric:tabular-nums;">${t.progress!=null?t.progress+'%':'-'}</td>
-     <td style="border:1px solid var(--border);padding:5px 8px;font-size:12px;">${esc(t.status_norm||t.status||'-')}</td>
-     <td style="border:1px solid var(--border);padding:5px 8px;font-size:12px;"><span class="pill" style="background:${riskColor(t.risk_level||'正常')};font-size:10px;">${t.risk_level||'正常'}</span></td></tr>`).join('');
-  return `<table style="width:100%;border-collapse:collapse;"><tr><th style="border:1px solid var(--border);padding:5px 8px;font-size:11px;text-align:left;">任务</th><th style="border:1px solid var(--border);padding:5px 8px;font-size:11px;text-align:right;">进度</th><th style="border:1px solid var(--border);padding:5px 8px;font-size:11px;">状态</th><th style="border:1px solid var(--border);padding:5px 8px;font-size:11px;">风险</th></tr>${rows}</table>`;
-}
-function dashBlock(title, s, trend, name){
-  if(!s) return `<div class="card" style="margin-bottom:14px;"><h2>${title}</h2><div style="font-size:12px;color:var(--muted)">（无数据）</div></div>`;
-  const crSer = dashSeries(trend, name, 'completion_rate');
-  const rkSer = dashSeries(trend, name, 'risk');
-  const cards =
-    kpiCard('完成率', s.completion_rate+'%', `${s.done||0}/${s.total||0} 已完成`, crSer, false, '#4A6CF7') +
-    kpiCard('平均实际', s.avg_progress+'%', '', null, false) +
-    kpiCard('风险/预警', s.risk||0, `${(s.tasks||[]).filter(t=>t.risk_level==='风险').length} 高风险`, rkSer, true, BAD) +
-    kpiCard('滞后', s.delayed||0, '', null, true) +
-    kpiCard('关键任务', (s.tasks||[]).filter(t=>t.is_critical).length, '', null, false);
-  return `<div class="card" style="margin-bottom:14px;">
-    <h2 style="margin-bottom:10px;">${title} ${name?`<span style="font-size:11px;color:var(--muted);font-weight:400;">（趋势按同名历史 ${crSer.length?crSer.length+' 期':'暂无，生成该组周报并存历史后出现' }）</span>`:''}</h2>
-    <div class="kpi-grid" style="grid-template-columns:repeat(auto-fit,minmax(120px,1fr));">${cards}</div>
-    <div style="margin-top:10px;"><b style="font-size:13px;">🔴 预警与风险</b>${dashAlerts(s.tasks)}</div>
-    <div style="margin-top:10px;"><b style="font-size:13px;">📋 重点项目（前10）</b>${dashTable(s.tasks)}</div>
-  </div>`;
-}
+// ============ 看板（只展示 AI 提取条目） ============
 async function loadDashboard(){
   try{
     const d = await (await fetch('/api/dashboard')).json();
-    const per = dashState.per;
-    const trend = per==='all' ? (d.trend||[]) : (d.trend||[]).slice(0, per==='recent12'?12:4);
-    const hasGroups = Object.keys(d.groups||{}).length || (d.groups||[]).length;
-    const gcount = Array.isArray(d.groups)? d.groups.length : Object.keys(d.groups||{}).length;
-    $('dashMeta').textContent = `工作区 ${(d.global&&d.global.total)||0} 任务 ｜ 分组 ${gcount} ｜ 分类仓 ${Object.entries(d.items_summary||{}).map(([k,v])=>`${k} ${v}`).join('、') || '空'}`;
-    $('dashGlobal').innerHTML = dashState.view==='all' || !gcount
-      ? dashBlock('📊 全工作区总览', d.global, trend, '')
-      : '';
-    $('dashGroups').innerHTML = dashState.view==='groups'
-      ? (d.groups||[]).map(g=>dashBlock('📁 '+g.name, g.summary, trend, g.name)).join('')
-      : '';
-    if(dashState.view==='all' && gcount){
-      // 全部视图下，分组并列展示（不混在一起）
-      $('dashGroups').innerHTML = (d.groups||[]).map(g=>dashBlock('📁 '+g.name, g.summary, trend, g.name)).join('');
+    const summary = Object.entries(d.items_summary||{}).map(([k,v])=>`${k} ${v}`).join('、');
+    $('dashMeta').textContent = d.has_ai_data
+      ? `分类仓 ${summary||'空'} ｜ 已分析源 ${Object.keys(d.by_source||{}).length} 个`
+      : '⚠️ 尚未配置 AI Key 或未分析 —— 上传文件并配置 Key 后自动分析入库';
+    if(!d.has_ai_data){
+      $('dashGlobal').innerHTML = '<div class="card" style="margin-bottom:14px;"><div style="font-size:13px;color:var(--muted);">暂无 AI 提取数据。请先配置 AI Key（AI 配置库），然后重新上传源文件（上传即自动分析）。</div></div>';
+      $('dashGroups').innerHTML = '';
+      return;
     }
+    $('dashGlobal').innerHTML = (d.kinds||[]).map(k=>{
+      const secHtml = (k.sections||[]).map(s=>`
+        <div style="margin-top:8px;">
+          <div style="font-size:12px;font-weight:600;color:var(--muted);">${esc(s.name||'')}</div>
+          <div style="display:flex;flex-wrap:wrap;gap:6px;margin-top:4px;">
+            ${s.items.map(it=>{
+              const p = it.payload||{};
+              const detail = Object.entries(p).filter(([kk])=>!['section','source_line','fields'].includes(kk)).slice(0,3)
+                .map(([kk,vv])=>`<span style="color:var(--muted)">${esc(kk)}:</span> ${esc(String(vv).slice(0,30))}`).join(' · ');
+              const fields = p.fields ? Object.entries(p.fields).slice(0,4).map(([kk,vv])=>`<span style="color:var(--muted)">${esc(kk)}:</span> ${esc(String(vv).slice(0,24))}`).join(' · ') : '';
+              return `<div style="border:1px solid var(--border);border-radius:8px;padding:6px 10px;font-size:12px;background:#fff;max-width:340px;">
+                <b>${esc(it.name)}</b><br><span style="font-size:11px;">${detail||fields||'—'}</span></div>`;
+            }).join('')}
+          </div>
+        </div>`).join('');
+      return `<div class="card" style="margin-bottom:14px;">
+        <h2 style="margin-bottom:4px;">${esc(k.label)}（${k.total}）</h2>
+        ${secHtml||'<div style="font-size:12px;color:var(--muted);">（无条目）</div>'}
+      </div>`;
+    }).join('');
+    $('dashGroups').innerHTML = '';
   }catch(e){ $('dashGlobal').innerHTML='<div class="card">看板加载失败：'+esc(e.message)+'</div>'; }
 }
 

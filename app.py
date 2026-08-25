@@ -365,85 +365,39 @@ async def workspace_load(files: List[UploadFile] = File(...),
             source_id = datastore.save_source(fname, tmp)
             dataset_sections = None
             if ext in (".xlsx", ".xlsm"):
-                # Excel 多 sheet：每个工作表生成一个独立 sheet 对象
-                from pmo_report.parsers import tabular_parser
-                sheet_projects = tabular_parser.parse_excel_all(tmp)
-                # 数据集形态：保留每 sheet 的完整板块结构（指标/里程碑/风险/依赖/资源/预算/计划/RFA/附录），
-                # 供「模板 + 数据集 → AI 严格按模板抓数生成周报」使用；同时分类入仓。
+                # 数据集表格结构：保留每 sheet 的表头+行（给 AI 看的原始数据形态）
                 try:
                     from pmo_report.dataset import parse_dataset_sheets
                     dataset_sections = parse_dataset_sheets(tmp)
                     datastore.save_dataset_sections(source_id, dataset_sections)
                 except Exception:
                     dataset_sections = None
-            else:
-                sheet_projects = [(os.path.splitext(uf.filename or "")[0], parse_file(tmp, period=""))]
         except Exception as e:
-            raise HTTPException(500, f"解析 {uf.filename} 失败: {e}")
+            raise HTTPException(500, f"保存 {uf.filename} 失败: {e}")
         finally:
             os.path.exists(tmp) and os.remove(tmp)
         is_dataset = bool(dataset_sections)
-        for name, proj in sheet_projects:
-            sid = _next_sid()
-            stats = analyze(proj, rules=load_rules())
-            WORKSPACE["sheets"][sid] = {
-                "name": proj.name or name,
-                "source": uf.filename or "",
-                "source_id": source_id,
-                "project": proj,
-                "_stats": stats.to_dict(),
-                "parse_stats": proj.parse_stats,
-                "rule_tasks": proj.rule_snapshot,
-                "sheet_type": "dataset" if is_dataset else "task",
-            }
-            created.append(sid)
-        # 分类入仓：任务 → task；风险项 → risk；未识别 → raw；
-        # 数据集板块 → milestone/metric/decision/issue 等（板块化，不再强压成 task）
-        if sheet_projects:
-            items = []
-            for _, proj in sheet_projects:
-                for t in proj.tasks:
-                    items.append(("task", t.name, {
-                        "owner": t.owner, "progress": t.progress, "status": t.status,
-                        "plan_end": t.plan_end.isoformat() if t.plan_end else None,
-                        "note": t.note, "source_line": t.source_line,
-                    }, ""))
-            st_all = [analyze(p, rules=load_rules()) for _, p in sheet_projects]
-            for st in st_all:
-                for ts in st.task_stats:
-                    if ts.risk_level != "正常":
-                        items.append(("risk", ts.task.name, {
-                            "level": ts.risk_level, "reason": ts.risk_reason, "source_line": ts.task.source_line,
-                        }, ""))
-            # 数据集板块分类入仓（保留字段，供看板/周报/自定义块取数）
-            if dataset_sections:
-                from pmo_report.dataset import _section_kind_hint
-                for sec in dataset_sections:
-                    kind = _section_kind_hint(sec.get("section", ""))
-                    for r in sec.get("rows", []):
-                        name = r.get(sec["headers"][0]) if sec.get("headers") else ""
-                        name = str(name or "").strip()
-                        if not name:
-                            continue
-                        items.append((kind, name, {"section": sec["section"], "fields": r}, ""))
-            datastore.add_items(source_id, items)
-            # 留痕：增添操作（上传成功记录）
-            datastore.log_source_op("add", source_id, fname, {"sheets": len(sheet_projects)})
-            # 一条线架构：上传即 AI 辅助分析（非结构化 → 结构化补全，注入分析要求 requirements）
-            # 仅对文本类/规则解析不充分的文件调用；失败静默（保留规则解析结果）
-            if ext not in (".xlsx", ".xlsm"):
-                try:
-                    from pmo_report import datastore as _ds
-                    src_rec = _ds.get_source(source_id)
-                    stored = src_rec.get("stored_path", "") if src_rec else ""
-                    if stored and os.path.exists(stored):
-                        from pmo_report.ai_analysis import ai_assist_analysis
-                        r = ai_assist_analysis(source_id, stored, ext, ai_mod, prompts_mod, rules_mod,
-                                               existing_items=items)
-                        if r.get("added"):
-                            print(f"  [ai_analysis] {fname}: {r.get('note')}")
-                except Exception:
-                    pass
+        # 一条线：上传即 AI 分析（主体是 AI，注入处理约定+分析要求）
+        # 无 Key / AI 失败时只保留原始文件（不产生规则假数据）
+        ai_note = ""
+        try:
+            from pmo_report import datastore as _ds
+            from pmo_report import prompts as _prompts_mod
+            from pmo_report.ai_analysis import ai_assist_analysis
+            src_rec = _ds.get_source(source_id)
+            stored = src_rec.get("stored_path", "") if src_rec else ""
+            if stored and os.path.exists(stored):
+                r = ai_assist_analysis(source_id, stored, ext, ai_mod, _prompts_mod, rules_mod,
+                                       existing_items=[], dataset_sections=dataset_sections)
+                ai_note = r.get("note", "")
+                if r.get("added"):
+                    print(f"  [ai_analysis] {fname}: {ai_note}")
+        except Exception as e:
+            print(f"  [ai_analysis] 异常: {e}")
+        created.append(source_id)
+        log_note = f"上传 {fname}" + (f"；{ai_note}" if ai_note else "（未配置 AI Key，仅存原文）")
+        from pmo_report import datastore as _ds2
+        _ds2.log_source_op("add", source_id, fname, {"note": log_note})
     _persist_workspace()
     return {"ok": True, "created": created, "renamed": renamed,
             "is_dataset": is_dataset, "workspace": _workspace_view()}
@@ -749,23 +703,32 @@ def list_items(kind: str = "", period: str = ""):
 
 @app.get("/api/dashboard")
 def get_dashboard():
-    """分组看板数据：全局汇总 + 各分组独立汇总 + 趋势序列 + 分类仓摘要。
-    设计语言遵循看板 skill：KPI 卡带涨跌/迷你趋势、升即坏反色、分组各自成区不混在一起。"""
-    rules = load_rules()
-    all_sheets = [sh for sh in WORKSPACE["sheets"].values() if "project" in sh]
-    global_stats = _summarize_sheet(all_sheets) if all_sheets else None
-    groups = []
-    for gid, g in WORKSPACE["groups"].items():
-        member = [WORKSPACE["sheets"][s] for s in g["sheets"] if s in WORKSPACE["sheets"] and "project" in WORKSPACE["sheets"][s]]
-        groups.append({"gid": gid, "name": g["name"], "summary": _summarize_sheet(member) if member else None})
-    # 趋势序列（来自已保存的历史统计，按项目/分组名聚合出迷你趋势）
-    h = _load_stats_history()
-    series = [{"time": e.get("time", ""), "name": e.get("project") or e.get("file", ""),
-               "completion_rate": (e.get("stats") or {}).get("completion_rate"),
-               "risk": (e.get("stats") or {}).get("risk")} for e in h[:30]]
+    """看板：只展示 AI 提取条目（分类仓 items 按 kind/板块分组）。
+    无 AI 提取数据时提示「未配置/未分析」，不显示规则计算的假 KPI。"""
     from pmo_report import datastore
-    return {"global": global_stats, "groups": groups, "trend": series,
-            "items_summary": datastore.items_summary()}
+    items = datastore.query_items(limit=1000)
+    kind_label = {"task": "任务", "risk": "风险", "issue": "依赖/问题", "decision": "决策",
+                  "milestone": "里程碑", "metric": "指标", "raw": "原始"}
+    by_kind = {}
+    for it in items:
+        k = it.get("kind") or "raw"
+        by_kind.setdefault(k, []).append(it)
+    kinds = []
+    for k, arr in by_kind.items():
+        by_sec = {}
+        for it in arr:
+            sec = (it.get("payload") or {}).get("section") or ""
+            by_sec.setdefault(sec, []).append(it)
+        kinds.append({
+            "kind": k, "label": kind_label.get(k, k), "total": len(arr),
+            "sections": [{"name": sec or "（未分板块）", "items": sec_items[:50]}
+                         for sec, sec_items in by_sec.items()],
+        })
+    by_src = {}
+    for it in items:
+        by_src[it.get("source_id", "")] = by_src.get(it.get("source_id", ""), 0) + 1
+    return {"kinds": kinds, "items_summary": datastore.items_summary(),
+            "by_source": by_src, "has_ai_data": bool(items)}
 
 
 @app.post("/api/workspace/sheet/{sid}/ai-review")
@@ -2199,45 +2162,45 @@ def generate_one(payload: GenerateOneIn):
             return {"ok": True, "mode": "dataset", "html": html,
                     "note": f"已按模板从数据集生成（{len(sections)} 个板块）"}
 
-    # 2) 有关联 sheet 的 tasks → 规则引擎 + AI 增强
-    sheet_objs = [sh for sh in WORKSPACE["sheets"].values() if sh.get("source_id") == payload.source_id]
-    if sheet_objs:
-        rules = load_rules()
-        stats_list = []
-        for sh in sheet_objs:
-            proj = sh["project"]
-            try:
-                st = analyze(proj, rules=rules)
-                stats_list.append(st)
-            except Exception:
-                continue
-        if stats_list:
-            merged = _merge_stats(stats_list, name=payload.project_name or src["filename"],
-                                  period=payload.period, rules=rules)
-            gen = ReportGenerator(template=(template_text if template_text and '<' in template_text else None))
-            res = gen.render(merged, use_ai=bool(payload.use_ai))
-            html = res.get("report") or ""
-            if "<" not in html or ">" not in html:
-                html = res.get("report_html") or html
-            return {"ok": True, "mode": "rules", "html": html,
-                    "note": f"已用规则引擎统计 + AI 增强生成（{len(sheet_objs)} 个 sheet）"}
-
-    # 3) 都没有 → AI 主链路（从原文分析）
-    try:
-        md_text = doc_to_markdown(stored)
-        from pmo_report.ai_pipeline import ai_filter_data, ai_analyze, ai_present
-        structured = ai_filter_data(md_text, ai_mod, prompts_mod)
-        reqs = rules_mod.load_rules().get("requirements") or []
-        analysis = ai_analyze(structured, reqs, ai_mod, prompts_mod)
-        html = ai_present(analysis, structured, template_text, ai_mod, prompts_mod,
-                          report_type=payload.report_type,
-                          generation_requirements=gen_reqs)
+    # 2) 无数据集表格结构 → 用已入库的 AI 分析条目（items）
+    items = datastore.query_items(source_id=payload.source_id, limit=800)
+    if items:
+        from collections import defaultdict
+        groups = defaultdict(list)
+        for it in items:
+            sec = (it.get("payload") or {}).get("section") or it.get("kind") or "其他"
+            groups[sec].append(it)
+        parts = []
+        for sec, arr in groups.items():
+            head = [f"### {sec}"]
+            for it in arr[:50]:
+                p = it.get("payload") or {}
+                fields = p.get("fields") or {k: v for k, v in p.items() if k not in ("section", "source_note")}
+                detail = " | ".join(f"{k}={v}" for k, v in list(fields.items())[:6]) if fields else ""
+                head.append(f"- {it.get('name','')}" + (f"（{detail}）" if detail else ""))
+            parts.append("\n".join(head))
+        items_text = "\n\n".join(parts)
+        if not template_text:
+            template_text = "一、总体进展\n二、关键数据\n三、风险与问题\n四、下周计划"
+        entry = prompts_mod.get_prompt("dataset_report")
+        prompt = prompts_mod.render_user(entry, {
+            "template_text": template_text[:8000],
+            "dataset_text": items_text[:20000],
+            "generation_requirements": gen_reqs_text,
+        })
+        out = ai_mod.call_with_cache(
+            "dataset_report",
+            [{"role": "system", "content": entry.get("system", "")},
+             {"role": "user", "content": prompt}],
+            temperature=0.3, max_tokens=4000,
+        )
+        html = _strip_code_block(out or "")
         if "<" in html and ">" in html:
-            return {"ok": True, "mode": "ai_pipeline", "html": html,
-                    "note": f"AI 主链路生成（原文 {len(md_text)} 字符，筛选 {len((structured or {}).get('sections', []))} 条）"}
-    except Exception as e:
-        raise HTTPException(502, f"生成失败：{e}")
-    raise HTTPException(502, "未能生成周报（请检查数据源内容）")
+            return {"ok": True, "mode": "ai_items", "html": html,
+                    "note": f"AI 从已分析数据生成（{len(items)} 条 AI 提取条目，{len(groups)} 个板块）"}
+        raise HTTPException(502, "AI 未产出有效 HTML")
+
+    raise HTTPException(400, "该数据源还没有 AI 分析结果：请先配置 API Key 并重新上传（上传即自动分析），或检查源文件")
 
 
 def _strip_code_block(out: str) -> str:
