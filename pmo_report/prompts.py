@@ -74,6 +74,21 @@ PROMPT_DEFAULTS: Dict[str, Dict] = {
                  "{source_text}": "用户上传的模板原文（系统自动填充，截断 6000 字）"},
         "examples": [],
     },
+    "template_tune": {
+        "label": "模板对话微调",
+        "system": "你是 HTML 排版专家。基于当前模板按用户的调整要求重写，只输出完整 HTML，不要 markdown 符号、不要代码块包裹。",
+        "user": (
+            "下面是一份项目周报模板（HTML）。用户想对它做调整。\n\n"
+            "【当前模板】\n{template_html}\n\n"
+            "【用户调整要求】\n{tune_request}\n\n"
+            "要求：\n"
+            "1. 保留模板整体结构与占位符（如 {project_name}/{period}/{today} 等），只按用户要求修改相应部分。\n"
+            "2. 用户没要求改的部分保持不变；不要擅自增删章节。\n"
+            "3. 只输出修改后的完整 HTML 模板本身，不要解释、不要代码块包裹。"
+        ),
+        "docs": {"{template_html}": "当前模板 HTML", "{tune_request}": "用户对模板的调整要求"},
+        "examples": [],
+    },
     "ai_review": {
         "label": "AI 深度解析（校验修正任务字段）",
         "system": "你是严谨的数据校验助手，只输出 JSON 数组。",

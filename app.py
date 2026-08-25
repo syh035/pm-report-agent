@@ -1582,6 +1582,53 @@ def get_ai_config():
     return {"config": ai_mod.ai_config(), "models": ai_mod.SUPPORTED_MODELS}
 
 
+@app.get("/api/config-schema")
+def config_schema():
+    """动态表单 schema：规则库 + AI 配置 的分组字段定义（供 FormKit 渲染）。"""
+    rules = rules_mod.load_rules()
+    meta = rules_mod.RULE_META
+    rule_fields = []
+    for k, default in rules_mod.DEFAULT_RULES.items():
+        if k in ("requirements", "generation_requirements"):
+            continue
+        m = meta.get(k) or {}
+        ftype = "number"
+        if m.get("type") == "color":
+            ftype = "color"
+        elif m.get("type") == "select":
+            ftype = "select"
+        elif m.get("type") == "keywords":
+            ftype = "keywords"
+        elif m.get("type") == "mapping":
+            ftype = "mapping"
+        rule_fields.append({
+            "key": k, "label": m.get("label", k), "desc": m.get("desc", ""),
+            "type": ftype, "unit": m.get("unit", ""), "min": m.get("min"), "max": m.get("max"),
+            "options": m.get("options") or [],
+        })
+    ai_cfg = ai_mod.ai_config()
+    schema = {
+        "rules": {
+            "groups": [
+                {"title": "风险分级阈值与颜色", "fields": rule_fields},
+            ]
+        },
+        "ai": {
+            "groups": [
+                {"title": "模型与接口", "fields": [
+                    {"key": "model", "label": "模型", "type": "select",
+                     "options": [{"value": m["value"], "label": m["label"]} for m in ai_mod.SUPPORTED_MODELS],
+                     "desc": "deepseek-chat 通用性价比高；deepseek-reasoner 推理更强、更贵"},
+                    {"key": "base_url", "label": "API 地址（Base URL）", "type": "text",
+                     "placeholder": "https://api.deepseek.com", "desc": "兼容 OpenAI 格式；留空用官方地址"},
+                ]},
+            ]
+        },
+    }
+    return {"schema": schema, "rules": rules, "ai_config": ai_cfg,
+            "ai_models": ai_mod.SUPPORTED_MODELS}
+
+
 @app.post("/api/settings/ai")
 def save_ai_config(payload: AiConfigIn):
     cfg = ai_mod.save_ai_config(payload.model, payload.base_url)
@@ -1828,6 +1875,39 @@ async def template_parse(file: UploadFile = File(...)):
     except Exception as e:
         return {"ok": False, "html": "", "source_text": text[:5000],
                 "error": f"AI 解析失败（{e}）。以下是抽取的原始文本，可手动整理。"}
+
+
+class TemplateTuneIn(BaseModel):
+    template_html: str = ""
+    tune_request: str = ""
+
+
+@app.post("/api/template/tune")
+def template_tune(payload: TemplateTuneIn):
+    """模板对话微调：基于当前模板 HTML + 用户调整要求，AI 重写模板。
+
+    返回 {ok, html}。失败抛 502（无 Key 或 AI 出错）。"""
+    from pmo_report import prompts as prompts_mod
+    tpl = (payload.template_html or "").strip()
+    req = (payload.tune_request or "").strip()
+    if not tpl or not req:
+        raise HTTPException(400, "模板与调整要求不能为空")
+    entry = prompts_mod.get_prompt("template_tune")
+    prompt = prompts_mod.render_user(entry, {"template_html": tpl[:8000],
+                                             "tune_request": req[:500]})
+    try:
+        out = ai_mod.call_with_cache(
+            "template_tune",
+            [{"role": "system", "content": entry.get("system", "")},
+             {"role": "user", "content": prompt}],
+            temperature=0.3, max_tokens=4000,
+        )
+    except Exception as e:
+        raise HTTPException(502, f"AI 微调失败（可检查 API Key）：{e}")
+    html = _strip_code_block(out or "")
+    if "<" not in html or ">" not in html:
+        raise HTTPException(502, "AI 未产出有效 HTML 模板")
+    return {"ok": True, "html": html}
 
 
 # ================= 周报生成 =================

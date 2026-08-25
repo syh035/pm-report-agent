@@ -55,21 +55,8 @@
 </div>
 
 <div class="card">
-  <h3>🧠 模型与接口</h3>
-  <div class="field">
-    <label>模型</label>
-    <select id="aiModelSelect"></select>
-    <div class="hint">deepseek-chat 通用性价比高；deepseek-reasoner 推理增强、更贵更慢</div>
-  </div>
-  <div class="field">
-    <label>API 地址（Base URL，兼容 OpenAI 格式；留空用官方地址）</label>
-    <input type="text" id="aiBaseUrl" placeholder="https://api.deepseek.com">
-  </div>
-  <div class="row">
-    <button class="btn btn-primary" onclick="saveAiConfig()">保存配置</button>
-    <button class="btn btn-outline" onclick="loadAiConfig()">重新载入</button>
-    <span class="msg" id="aiCfgMsg"></span>
-  </div>
+  <h3>模型与接口（FormKit 动态表单）</h3>
+  <div id="aiKitBox"></div>
 </div>
 
 <div class="card">
@@ -84,6 +71,7 @@
     <tbody id="tokenEntries"></tbody></table>
 </div>
 
+<script src="/lib/formkit.js"></script>
 <script>
 const $ = id => document.getElementById(id);
 function esc(s){ return String(s??'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
@@ -122,19 +110,22 @@ async function testApiKey(){
   $('keyMsg').textContent = d.ok?('✅ 连接成功：'+esc(d.reply)):('❌ 连接失败：'+esc(d.error||'未知错误'));
 }
 async function loadAiConfig(){
-  const d = await (await fetch('/api/settings/ai')).json();
-  const cfg = d.config || {};
-  $('aiModelSelect').innerHTML = (d.models||[]).map(m=>
-    `<option value="${m.value}" ${cfg.model===m.value?'selected':''}>${m.label}</option>`).join('');
-  $('aiBaseUrl').value = (cfg.base_url && cfg.base_url!=='https://api.deepseek.com') ? cfg.base_url : '';
-}
-async function saveAiConfig(){
-  const body = {model: $('aiModelSelect').value, base_url: $('aiBaseUrl').value.trim()};
-  $('aiCfgMsg').textContent='保存中...';
-  const res = await fetch('/api/settings/ai',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
-  const d = await res.json();
-  $('aiCfgMsg').className = res.ok?'msg ok':'msg err';
-  $('aiCfgMsg').textContent = res.ok ? (d.note||'已保存') : (d.detail||'保存失败');
+  try{
+    const d = await (await fetch('/api/config-schema')).json();
+    window._kitSchema = d.schema.ai;
+    window._kitValue = { model: (d.ai_config||{}).model||'deepseek-chat',
+      base_url: ((d.ai_config||{}).base_url && d.ai_config.base_url!=='https://api.deepseek.com') ? d.ai_config.base_url : '' };
+    window._kitOpts = {
+      onSave: async ()=>{
+        const body = {model: window._kitValue.model||'deepseek-chat', base_url: (window._kitValue.base_url||'').trim()};
+        const res = await fetch('/api/settings/ai',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
+        const dr = await res.json();
+        if(!res.ok){ alert('保存失败: '+(dr.detail||JSON.stringify(dr))); return; }
+        alert(dr.note||'已保存');
+      }
+    };
+    kitInit('aiKitBox', window._kitSchema, window._kitValue, window._kitOpts);
+  }catch(e){ document.getElementById('aiKitBox').innerHTML='<div style="color:var(--muted);font-size:12px;">加载失败: '+kitEsc(String(e))+'</div>'; }
 }
 const SITE_LABELS = {report:'周报综述', enrich:'文本提炼', template:'模板解析', ai:'其它'};
 async function loadTokenUsage(){

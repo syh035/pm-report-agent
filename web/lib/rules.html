@@ -113,17 +113,26 @@ async function load(){
       <div>${esc(r.description)}</div></span></label>
       <button class="btn btn-danger btn-sm" onclick="delRule('generation_requirement',${ri})">删除</button></div>`).join('')
     : '<div style="color:var(--muted);font-size:13px;">暂无生成要求</div>';
-  // 规则参数
+  // 规则参数（FormKit 动态表单：分组折叠 + 搜索 + 自动控件）
   renderAll();
-  const kvs = Object.entries(rules).filter(([k])=>!['requirements','generation_requirements','ignore_keywords','column_aliases','status_words'].includes(k));
-  $('rulesList').innerHTML = kvs.map(([k,v])=>{
-    const m = meta[k]||{};
-    return `<div class="kv"><span>${esc(m.label||k)} <span style="font-size:11px;color:var(--muted)">${esc(m.desc||'')}</span></span>
-      <span class="v" style="cursor:pointer;" onclick="editRule('${k}')" title="点击修改">${esc(v)} 修改</span></div>`;
-  }).join('')
-    + (rules.ignore_keywords?.length?`<div class="kv"><span>忽略词</span><span class="v">${rules.ignore_keywords.map((w,i)=>`${esc(w)} <button class="btn btn-danger btn-sm" onclick="delRule('ignore',null,'${esc(w)}')">删</button>`).join(' ')}</span></div>`:'')
-    + (Object.keys(rules.status_words||{}).length?`<div class="kv"><span>状态词映射</span><span class="v">${Object.entries(rules.status_words).map(([k,v])=>`${esc(k)}=${esc(v)} <button class="btn btn-danger btn-sm" onclick="delRule('status_word',null,'${esc(k)}')">删</button>`).join(' ')}</span></div>`:'')
-    + (Object.keys(rules.column_aliases||{}).length?`<div class="kv"><span>列名映射</span><span class="v">${Object.entries(rules.column_aliases).map(([k,v])=>`${esc(k)}=${esc(v)} <button class="btn btn-danger btn-sm" onclick="delRule('column_alias',null,'${esc(k)}')">删</button>`).join(' ')}</span></div>`:'');
+  loadKit();
+}
+async function loadKit(){
+  try{
+    const d = await (await fetch('/api/config-schema')).json();
+    window._kitSchema = d.schema.rules;
+    window._kitValue = JSON.parse(JSON.stringify(d.rules));
+    window._kitOpts = {
+      onSave: async ()=>{
+        const res = await fetch('/api/rules',{method:'POST',headers:{'Content-Type':'application/json'},
+          body:JSON.stringify(window._kitValue)});
+        const dr = await res.json();
+        if(!res.ok){ alert('保存失败: '+(dr.detail||JSON.stringify(dr))); return; }
+        alert('已保存并写入历史'); load();
+      }
+    };
+    kitInit('rulesList', window._kitSchema, window._kitValue, window._kitOpts);
+  }catch(e){ document.getElementById('rulesList').innerHTML='<div style="color:var(--muted);font-size:13px;">加载规则参数失败: '+kitEsc(String(e))+'</div>'; }
 }
 function renderAll(){
   const box = document.getElementById('overviewList'); if(!box) return;

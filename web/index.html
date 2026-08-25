@@ -1074,13 +1074,21 @@ async function tplSaveLib(){
   setTimeout(()=>{ $('tplConfirmBox').style.display='none'; $('tplConfirmMsg').textContent=''; }, 1200);
   loadGenTpls();
 }
-function tplRegenerate(){
-  // 再次对话微调：让 AI 基于当前解析结果重新生成（简单实现：提示用户修改后重新解析）
-  const newReq = prompt('输入您对模板的调整要求（将让 AI 基于原模板微调）：', '把标题改为更正式的写法，保持章节结构不变');
-  if(!newReq) return;
-  $('templateMsg').textContent='AI 正在微调模板…';
-  // 用 dataset/template-extract 无文件；直接走 parse（重新解析同原文不可行）→ 用 AI 对话微调：临时方案复用 template_parse 占位
-  alert('微调功能：请调整后重新上传模板文档（AI 将按新要求解析）；或点「直接编辑」手动改 HTML');
+async function tplRegenerate(){
+  if(!_tplPendingHtml){ alert('请先上传并解析模板'); return; }
+  const newReq = prompt('输入您对模板的调整要求（AI 将基于当前模板微调）：', '把标题改为更正式的写法，保持章节结构不变');
+  if(!newReq || !newReq.trim()) return;
+  $('templateMsg').className=''; $('templateMsg').textContent='AI 正在微调模板…';
+  try{
+    const res = await fetch('/api/template/tune',{method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({template_html:_tplPendingHtml, tune_request:newReq})});
+    const d = await res.json();
+    if(!res.ok){ $('templateMsg').className='msg err'; $('templateMsg').textContent=d.detail||'微调失败'; return; }
+    _tplPendingHtml = d.html;
+    $('templateMsg').className='msg ok';
+    $('templateMsg').textContent='已微调，请确认后命名入库：';
+    $('templatePreview').innerHTML = d.html;
+  }catch(e){ $('templateMsg').className='msg err'; $('templateMsg').textContent='微调异常: '+e; }
 }
 function tplEditHtml(){
   const cur = _tplPendingHtml || '';
