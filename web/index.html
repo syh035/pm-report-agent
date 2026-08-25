@@ -130,9 +130,17 @@
     </div>
     <div id="workspaceTree"></div>
     <button class="side-btn" onclick="createGroup()">＋ 新建分组</button>
-    <div class="side-title" style="margin-top:10px;">📦 源数据 <span id="srcBadge" style="opacity:.6"></span></div>
+    <div class="side-title" style="margin-top:10px;">📦 源数据 <span id="srcBadge" style="opacity:.6"></span>
+      <span style="float:right;font-weight:400;text-transform:none;letter-spacing:0;">
+        <input type="date" id="srcDate" style="font-size:11px;padding:1px 4px;border:1px solid var(--border);border-radius:6px;" onchange="srcDateChanged()" title="按日期筛选源数据">
+      </span>
+    </div>
+    <div id="srcModeBar" style="display:flex;gap:4px;margin-bottom:6px;font-size:11px;">
+      <button class="f" id="srcModeCur" style="background:var(--primary);color:#fff;border:none;border-radius:6px;padding:2px 8px;cursor:pointer;" onclick="setSrcMode('cur')">当前选中</button>
+      <button class="f" id="srcModeAll" style="background:#EEF2FF;color:var(--primary);border:none;border-radius:6px;padding:2px 8px;cursor:pointer;" onclick="setSrcMode('all')">全部</button>
+    </div>
     <div id="sourceList" style="font-size:12px;color:var(--muted);padding:2px 8px;">（加载中…）</div>
-    <div style="font-size:11px;color:var(--muted);padding:6px 8px;line-height:1.6;">💡 上传资料用右上角按钮；sheet 可拖入分组或点 📁 移入；源文件永久保留可下载</div>
+    <div style="font-size:11px;color:var(--muted);padding:6px 8px;line-height:1.6;">💡 上传资料用右上角按钮；源数据默认显示当前选中 sheet 用到的文件，可切「全部」或按日期筛选</div>
   </div>
 
   <!-- 主区域 -->
@@ -140,9 +148,7 @@
     <div class="tabs">
       <div class="tab active" data-tab="data">数据</div>
       <div class="tab" data-tab="dashboard">看板</div>
-      <div class="tab" data-tab="rules">规则配置</div>
-      <div class="tab" data-tab="template">模板</div>
-      <div class="tab" data-tab="report">周报 / 历史</div>
+      <div class="tab" data-tab="template">模板 & 生成</div>
       <div class="tab" data-tab="settings">设置</div>
     </div>
 
@@ -204,54 +210,28 @@
     </div>
 
     <!-- 规则面板 -->
-    <div class="panel" id="panel-rules">
-      <div class="card">
-        <h2>风险分级阈值与颜色</h2>
-        <div class="row" id="ruleFields"></div>
-        <div class="row" style="margin-top:16px;">
-          <button class="btn btn-primary" onclick="saveRules()">保存规则</button>
-          <button class="btn btn-outline" onclick="loadRules()">重新载入</button>
-          <button class="btn btn-outline" onclick="exportRules()">导出规则</button>
-          <button class="btn btn-outline" onclick="$('rulesImportInput').click()">导入规则</button>
-          <input type="file" id="rulesImportInput" accept=".json" style="display:none" onchange="importRules(this)">
-          <button class="btn btn-danger" onclick="resetRules()">恢复默认（清理旧规则）</button>
-          <button class="btn btn-outline" onclick="toggleHistory()">查看规则历史</button>
-        </div>
-        <div class="msg" id="rulesMsg"></div>
-        <div id="rulesHistory" style="display:none;margin-top:14px;"><h3 style="font-size:13px;margin-bottom:8px">规则历史快照</h3><div id="rulesHistoryList"></div></div>
-      </div>
-    </div>
-
-    <!-- 模板面板 -->
+    <!-- 模板&生成面板（模板管理 + 趋势 + 三种生成方式收拢） -->
     <div class="panel" id="panel-template">
       <div class="card">
-        <h2>模板库（上传模板文档 + AI 按模板生成）</h2>
-        <p style="font-size:12px;color:var(--muted);margin-bottom:12px;">
-          上传周报模板文档（Word/PDF/HTML/txt）→ AI 解析成模板；生成时 AI 严格按模板章节结构、从数据集/源文件抓真实数据。
-          模板版本历史与日历浏览在「📚 数据库中心 → 模板库」。
-        </p>
+        <h2>📋 模板（上传文档 + AI 解析）</h2>
         <div class="row" style="margin-bottom:12px;flex-wrap:wrap;">
           <input type="file" id="templateFile" accept=".docx,.pdf,.html,.md,.txt">
           <button class="btn btn-primary" onclick="parseTemplate()">上传模板并用 AI 解析</button>
           <button class="btn btn-outline" onclick="loadTemplate()">载入当前模板</button>
           <button class="btn btn-danger" onclick="resetTemplate()">恢复默认</button>
-          <button class="btn btn-primary" onclick="window.open('/lib/templates.html','_blank')">📋 模板库（版本历史）</button>
+          <button class="btn btn-outline" onclick="window.open('/lib/templates.html','_blank')">📋 模板库（版本历史）</button>
         </div>
         <div class="msg" id="templateMsg"></div>
         <div id="templatePreview" style="border:1px solid var(--border);border-radius:8px;padding:14px;background:#fff;"></div>
       </div>
-    </div>
-
-    <!-- 周报面板 -->
-    <div class="panel" id="panel-report">
       <div class="card">
-        <h2>项目趋势（按已保存的历史统计）</h2>
+        <h2>📈 项目趋势（按已保存的历史统计）</h2>
         <canvas id="trendCanvas" width="760" height="220" style="max-width:100%;"></canvas>
         <div id="trendMsg" style="font-size:12px;color:var(--muted);"></div>
       </div>
       <div class="card">
-        <h2>生成文稿</h2>
-        <div class="row">
+        <h2>🛠 生成文稿（规则引擎）</h2>
+        <div class="row" style="flex-wrap:wrap;">
           <div style="display:flex;gap:4px;">
             <button class="btn btn-primary" id="rtWeek" onclick="setReportType('week')">📅 周报</button>
             <button class="btn btn-outline" id="rtDay" onclick="setReportType('day')">📆 日报</button>
@@ -308,19 +288,6 @@
         <div class="hint" style="margin-top:6px;" id="dsTemplateHint"></div>
         <div class="msg" id="dsMsg"></div>
         <div id="dsReportBox" class="report-content" style="margin-top:10px;min-height:120px;"></div>
-      </div>
-      <div class="card">
-        <h2>文稿库（历史）</h2>
-        <div class="row" style="margin-bottom:8px;gap:8px;">
-          <div style="display:flex;gap:4px;">
-            <button class="btn btn-primary" id="histTypeAll" style="font-size:12px;padding:4px 10px" onclick="setHistType('')">全部</button>
-            <button class="btn btn-outline" id="histTypeWeek" style="font-size:12px;padding:4px 10px" onclick="setHistType('week')">📅 周报</button>
-            <button class="btn btn-outline" id="histTypeDay" style="font-size:12px;padding:4px 10px" onclick="setHistType('day')">📆 日报</button>
-          </div>
-          <input id="histSearch" placeholder="搜索文稿…" style="flex:1;min-width:140px;font-size:12px" oninput="loadHistory()">
-          <button class="btn btn-primary" id="summarizeBtn" style="font-size:12px;padding:4px 10px" onclick="summarizeSelected()">汇总选中(0)</button>
-        </div>
-        <ul class="history-list" id="historyList"></ul>
       </div>
     </div>
 
@@ -486,19 +453,51 @@ function sheetDrop(ev, gid){
   if(sid) moveToGroup(sid, gid);
 }
 // —— 📦 源数据（原始文件保留 + 行级对照） ——
+let srcMode = 'cur';   // cur=当前选中sheet的源 | all=全部 | date=按日期
 async function loadSourceList(){
   try{
     const d = await (await fetch('/api/sources')).json();
     const items = d.items||[];
     $('srcBadge').textContent = `(${items.length})`;
-    $('sourceList').innerHTML = items.length ? items.map(s=>
-      `<div style="display:flex;align-items:center;gap:4px;padding:3px 2px;font-size:12px;cursor:pointer;border-radius:4px;" onmouseover="this.style.background='#EEF2FF'" onmouseout="this.style.background=''" onclick="viewSource('${s.id}')">
-        <span title="${esc(s.filename)}">${s.has_dataset?'🗂':'📄'} ${esc(s.filename.length>14?s.filename.slice(0,14)+'…':s.filename)}</span>
-        <span style="margin-left:auto;font-size:10px;color:var(--muted)">${esc(s.uploaded_at.slice(5,16))}</span>
-        <span style="font-size:10px;color:var(--muted)">${s.n_sheets||0}表</span>
-      </div>`).join('') : '<div style="font-size:12px;color:var(--muted)">（暂无，上传后自动保留）</div>';
     fillDsSourceSel(items);
+    renderSourceList(items);
   }catch(e){ $('sourceList').textContent='源数据加载失败'; }
+}
+function setSrcMode(m){
+  srcMode = m;
+  $('srcModeCur').style.background = m==='cur' ? 'var(--primary)' : '#EEF2FF';
+  $('srcModeCur').style.color = m==='cur' ? '#fff' : 'var(--primary)';
+  $('srcModeAll').style.background = m==='all' ? 'var(--primary)' : '#EEF2FF';
+  $('srcModeAll').style.color = m==='all' ? '#fff' : 'var(--primary)';
+  loadSourceList();
+}
+function srcDateChanged(){ if($('srcDate').value) srcMode='date'; loadSourceList(); }
+function renderSourceList(items){
+  let list = items;
+  if(srcMode === 'cur'){
+    // 当前选中 sheet 用到的源文件
+    const cur = state.current||'';
+    let srcId = '';
+    if(cur.startsWith('sheet:')) srcId = state.sheet[cur.split(':')[1]]?.source_id||'';
+    else if(cur.startsWith('group:')){
+      const g = state.groups[cur.split(':')[1]];
+      const sids = (g?.sheets||[]);
+      const ids = new Set(sids.map(s=>state.sheet[s]?.source_id).filter(Boolean));
+      list = items.filter(s=>ids.has(s.id));
+    } else {
+      list = [];
+    }
+    if(srcId) list = items.filter(s=>s.id===srcId);
+  } else if(srcMode === 'date'){
+    const dt = $('srcDate').value;
+    if(dt) list = items.filter(s=>(s.uploaded_at||'').slice(0,10)===dt);
+  }
+  $('sourceList').innerHTML = list.length ? list.map(s=>
+    `<div style="display:flex;align-items:center;gap:4px;padding:3px 2px;font-size:12px;cursor:pointer;border-radius:4px;" onmouseover="this.style.background='#EEF2FF'" onmouseout="this.style.background=''" onclick="viewSource('${s.id}')">
+      <span title="${esc(s.filename)}">${s.has_dataset?'🗂':'📄'} ${esc(s.filename.length>14?s.filename.slice(0,14)+'…':s.filename)}</span>
+      <span style="margin-left:auto;font-size:10px;color:var(--muted)">${esc((s.uploaded_at||'').slice(5,16))}</span>
+      <span style="font-size:10px;color:var(--muted)">${s.n_sheets||0}表</span>
+    </div>`).join('') : '<div style="font-size:12px;color:var(--muted)">（无匹配源文件，可切「全部」或选日期）</div>';
 }
 function fillDsSourceSel(items){
   const sel = $('dsSourceSel'); if(!sel) return;
@@ -648,14 +647,16 @@ async function moveToGroup(sid, gid){
   // 若当前正显示该分组/被移动 sheet 的视图，刷新
   renderTableForCurrent();
 }
-async function selectSheet(sid){
+ async function selectSheet(sid){
   state.current = 'sheet:'+sid; $('emptyHint').style.display='none'; $('currentView').style.display='block';
   renderSheetView(state.sheet[sid]);
+  if(srcMode === 'cur') loadSourceList();
 }
 async function selectGroup(gid){
   const g = state.groups[gid]; state.current = 'group:'+gid;
   $('emptyHint').style.display='none'; $('currentView').style.display='block';
   renderGroupView(g);
+  if(srcMode === 'cur') loadSourceList();
 }
 async function delSheet(sid){ if(!confirm('删除该 sheet？'))return; await fetch('/api/workspace/sheet/'+sid+'/delete',{method:'POST'}); loadWorkspace(); }
 async function renameSheet(sid){
@@ -963,7 +964,7 @@ async function saveTasks(){
       const ld = await lr.json();
       const li = (ld.learned||{}).ignore||[], ls = (ld.learned||{}).status||[];
       if(li.length || ls.length){
-        msg += `；已学习：忽略词 ${li.length} 条${ls.length?`、状态词 ${ls.length} 条`:''}（规则库越用越准，可在「规则配置」管理）`;
+        msg += `；已学习：忽略词 ${li.length} 条${ls.length?`、状态词 ${ls.length} 条`:''}（规则库越用越准，可在「📚 数据库中心 → 规则库」查看）`;
       }
     }catch(e){ /* 回写失败不阻塞 */ }
   }
@@ -1120,128 +1121,6 @@ function renderTableForCurrent(){
   else if(cur && cur.startsWith('group:')) renderGroupView(state.groups[cur.split(':')[1]]);
 }
 
-// ============ 规则 ============
-async function loadRules(){
-  const res = await fetch('/api/rules'); const d = await res.json();
-  state.rules = d.rules;
-  let html='';
-  for(const k in d.rules){
-    const m=d.meta[k]||{};
-    if(m.type==='color'){
-      html+=`<div class="field"><label>${m.label||k} <span class="color-dot" style="background:${d.rules[k]}"></span></label>
-        <input type="color" id="rule_${k}" value="${d.rules[k]}" onchange="$('#rule_${k}').value=this.value">
-        <div class="hint">${m.desc||''}</div></div>`;
-    }else if(m.type==='select'){
-      html+=`<div class="field"><label>${m.label||k}</label>
-        <select id="rule_${k}">${(m.options||[]).map(o=>`<option value="${o.value}" ${d.rules[k]===o.value?'selected':''}>${o.label}</option>`).join('')}</select>
-        <div class="hint">${m.desc||''}</div></div>`;
-    }else if(m.type==='keywords' || m.type==='mapping'){
-      const isMap = m.type==='mapping';
-      const val = isMap ? Object.entries(d.rules[k]||{}).map(([a,b])=>a+'='+b).join('\n')
-                        : (d.rules[k]||[]).join('\n');
-      html+=`<div class="field"><label>${m.label||k}</label>
-        <textarea id="rule_${k}" rows="${isMap?3:4}" style="width:100%;font-size:12px;">${esc(val)}</textarea>
-        <div class="hint">${m.desc||''}</div></div>`;
-    }else{
-      html+=`<div class="field"><label>${m.label||k}（${m.unit||''}）</label>
-        <input type="number" id="rule_${k}" value="${d.rules[k]}" min="${m.min||0}" max="${m.max||999}">
-        <div class="hint">${m.desc||''}</div></div>`;
-    }
-  }
-  $('ruleFields').innerHTML=html;
-}
-function parseMappingText(txt){
-  const out={};
-  String(txt||'').split('\n').forEach(line=>{
-    const i=line.indexOf('=');
-    if(i>0){ const a=line.slice(0,i).trim(), b=line.slice(i+1).trim(); if(a&&b) out[a]=b; }
-  });
-  return out;
-}
-async function saveRules(){
-  const body={};
-  ['delay_days_danger','risk_near_end_days','slow_progress_pct'].forEach(k=>{body[k]=parseInt($('rule_'+k).value)||0;});
-  body.progress_curve = $('rule_progress_curve') ? $('rule_progress_curve').value : 'linear';
-  ['color_risk','color_warning','color_normal'].forEach(k=>body[k]=$('rule_'+k).value);
-  if($('rule_ignore_keywords')) body.ignore_keywords = $('rule_ignore_keywords').value.split('\n').map(s=>s.trim()).filter(Boolean);
-  if($('rule_column_aliases')) body.column_aliases = parseMappingText($('rule_column_aliases').value);
-  if($('rule_status_words')) body.status_words = parseMappingText($('rule_status_words').value);
-  const res=await fetch('/api/rules',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
-  const d=await res.json();
-  $('rulesMsg').className='msg ok'; $('rulesMsg').textContent=d.note||'已保存';
-  refreshRules();
-}
-async function resetRules(){
-  if(!confirm('恢复默认规则？旧规则会归档到历史。'))return;
-  await fetch('/api/rules/reset',{method:'POST'}); loadRules(); refreshRules();
-  $('rulesMsg').className='msg ok'; $('rulesMsg').textContent='已恢复默认';
-}
-async function exportRules(){
-  const res = await fetch('/api/rules/export');
-  const blob = await res.blob();
-  const a = document.createElement('a'); const url = URL.createObjectURL(blob);
-  a.href=url; a.download='规则库导出.json'; a.click(); URL.revokeObjectURL(url);
-}
-async function importRules(input){
-  const f = input.files && input.files[0];
-  if(!f) return;
-  const txt = await f.text();
-  let rules;
-  try{ rules = JSON.parse(txt); }catch(e){ alert('文件不是有效的 JSON'); input.value=''; return; }
-  const res = await fetch('/api/rules/import',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({rules})});
-  const d = await res.json();
-  $('rulesMsg').className = res.ok?'msg ok':'msg err';
-  $('rulesMsg').textContent = d.note || (d.detail||'导入失败');
-  input.value='';
-  loadRules(); refreshRules();
-}
-async function toggleHistory(){
-  const box=$('rulesHistory'); box.style.display=box.style.display==='none'?'block':'none';
-  if(box.style.display==='block'){
-    const d=await (await fetch('/api/rules/history')).json();
-    $('rulesHistoryList').innerHTML=d.history.slice(0,10).map(h=>
-      `<div style="font-size:12px;padding:5px 0;border-bottom:1px solid var(--border)">${h.time} — 超期${h.rules.delay_days_danger}天/临近${h.rules.risk_near_end_days}天/偏慢${h.rules.slow_progress_pct}%</div>`).join('')||'<div style="font-size:12px;color:var(--muted)">暂无历史</div>';
-  }
-}
-
-// ============ 模板 ============
-// ============ 模板库（上传文档 + AI 解析；生成走 AI 主链路） ============
-async function loadTemplate(){
-  const box = $('templatePreview'); if(!box) return;
-  const msg = $('templateMsg');
-  try{
-    const d = await (await fetch('/api/template')).json();
-    const fmt = d.format||'html';
-    if(fmt === 'blocks'){
-      box.innerHTML = `<div style="font-size:13px;color:var(--muted);">当前模板为 Blocks 结构（${(d.blocks||[]).length} 个模块）。建议上传模板文档后用 AI 解析，或直接使用「🤖 AI 主链路」生成。</div>`;
-    } else {
-      box.innerHTML = (d.html||'').length ? d.html : '<div style="font-size:13px;color:var(--muted);">（当前为默认模板）</div>';
-    }
-    if(msg){ msg.className=''; msg.textContent='已载入当前模板'; }
-  }catch(e){ box.innerHTML='<div style="font-size:13px;color:var(--muted);">加载模板失败</div>'; }
-}
-async function parseTemplate(){
-  const inp=$('templateFile'); if(!inp.files.length){alert('请先选择模板文件');return;}
-  $('templateMsg').className=''; $('templateMsg').textContent='⏳ AI 正在解析模板…';
-  const fd=new FormData(); fd.append('file',inp.files[0]);
-  const res=await fetch('/api/template/parse',{method:'POST',body:fd});
-  const d=await res.json();
-  if(d.ok){
-    $('templateMsg').className='msg ok';
-    $('templateMsg').textContent='✅ 已用 AI 解析为 HTML 模板并保存';
-    loadTemplate();
-  } else {
-    $('templateMsg').className='msg err';
-    $('templateMsg').textContent=(d.error||'解析失败');
-  }
-}
-async function resetTemplate(){
-  if(!confirm('恢复默认模板？')) return;
-  await fetch('/api/template/reset',{method:'POST'});
-  $('templateMsg').className='msg ok'; $('templateMsg').textContent='已恢复默认';
-  loadTemplate();
-}
-
 // ============ 周报 ============
 function currentHealth(){
   const cur=state.current;
@@ -1318,78 +1197,13 @@ async function saveToHistory(){
   await fetch('/api/save_report',{method:'POST',headers:{'Content-Type':'application/json'},
     body:JSON.stringify({filename:name,content:state.lastReport.report,stats:state.lastReport.stats||null,
       report_type:genReportType, period:$('genPeriod').value})});
-  alert('已存入文稿库（下次生成将自动与本期对比）');
-  loadHistory();
+  alert('已存入文稿库（可在「📚 数据库中心 → 文稿库」查看）');
 }
 function setReportType(t){
   genReportType = t;
   $('rtWeek').className = t==='week' ? 'btn btn-primary' : 'btn btn-outline';
   $('rtDay').className = t==='day' ? 'btn btn-primary' : 'btn btn-outline';
   $('genPeriod').placeholder = t==='day' ? '日期，如 2026-08-25' : '周期，如 2026-W33';
-}
-function setHistType(t){
-  histType = t;
-  [['','histTypeAll'],['week','histTypeWeek'],['day','histTypeDay']].forEach(([k,id])=>{
-    $(id).className = k===t ? 'btn btn-primary' : 'btn btn-outline';
-  });
-  loadHistory();
-}
-function toggleHistSel(name, ch){
-  if(ch) histSel[name]=1; else delete histSel[name];
-  $('summarizeBtn').textContent = `汇总选中(${Object.keys(histSel).length})`;
-}
-async function summarizeSelected(){
-  const names = Object.keys(histSel);
-  if(!names.length){ alert('请先勾选要汇总的文稿'); return; }
-  $('genMsg').className=''; $('genMsg').textContent='汇总中...';
-  const res = await fetch('/api/documents/summarize',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({names})});
-  const d = await res.json();
-  if(!res.ok){ $('genMsg').className='msg err'; $('genMsg').textContent='汇总失败：'+(d.detail||''); return; }
-  $('reportBox').innerHTML = d.report;
-  $('exportRow').style.display='flex';
-  state.lastReport = {report:d.report, project:d.project, stats:null};
-  $('genMsg').className='msg ok';
-  $('genMsg').textContent = `已汇总 ${d.n} 份文稿为「${d.project}」（确定性合并，未调 AI）`;
-}
-async function loadHistory(){
-  const d=await(await fetch('/api/history')).json();
-  const kw = ($('histSearch') ? $('histSearch').value : '').trim().toLowerCase();
-  const typeBadge = it => it.rtype==='day' ? '<span class="pill" style="background:#E65100;font-size:10px;">📆日报</span>'
-                       : it.rtype==='week' ? '<span class="pill" style="background:var(--primary);font-size:10px;">📅周报</span>' : '';
-  const itemHtml = it => `<li><label style="display:flex;gap:6px;align-items:center;flex:1;cursor:pointer;min-width:0;">
-      <input type="checkbox" ${histSel[it.name]?'checked':''} onchange="toggleHistSel('${it.name}',this.checked)">
-      <span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">📄 ${esc(it.name)} ${typeBadge(it)} ${it.period?`<span style="font-size:10px;color:var(--muted)">(${esc(it.period)})</span>`:''} ${it.has_stats?'<span class="pill" style="background:var(--primary);font-size:10px;">↻</span>':''}</span></label>
-      <span style="display:flex;gap:8px;align-items:center;flex-shrink:0;"><span style="font-size:11px;color:var(--muted)">${it.mtime}</span>
-      <button class="btn btn-outline btn-sm" onclick="viewHistory('${it.name}')" style="font-size:11px;padding:4px 10px">查看</button>
-      <button class="btn btn-outline btn-sm" onclick="renHistory('${it.name}')" style="font-size:11px;padding:4px 8px">重命名</button>
-      <button class="btn btn-danger btn-sm" onclick="delHistory('${it.name}')" style="font-size:11px;padding:4px 8px">删除</button></span></li>`;
-  let items = (d.items||[]).filter(it=>(!histType || it.rtype===histType) && (!kw || it.name.toLowerCase().includes(kw)));
-  if(!items.length){ $('historyList').innerHTML='<li style="color:var(--muted)">暂无匹配文稿</li>'; loadTrend(); return; }
-  // 按项目分组展示
-  const groups = {};
-  items.forEach(it=>{ const g = it.project || '（未分类）'; (groups[g]=groups[g]||[]).push(it); });
-  let html = '';
-  for(const g in groups){
-    html += `<li style="font-size:12px;font-weight:600;color:var(--primary);padding:8px 0 2px;">📁 ${esc(g)}（${groups[g].length}）</li>`;
-    html += groups[g].map(itemHtml).join('');
-  }
-  $('historyList').innerHTML = html;
-  loadTrend();
-}
-async function viewHistory(name){
-  const t=await(await fetch('/api/history/'+encodeURIComponent(name))).text();
-  $('reportBox').innerHTML=t.includes('<')?t:('<pre>'+esc(t)+'</pre>');
-}
-async function delHistory(name){
-  if(!confirm('删除历史周报「'+name+'」？（其环比统计也会移除）')) return;
-  const res = await fetch('/api/history/'+encodeURIComponent(name)+'/delete',{method:'POST'});
-  if(res.ok){ loadHistory(); }
-}
-async function renHistory(name){
-  const nn = prompt('新名称（保留 .html 后缀）：', name);
-  if(!nn || nn===name) return;
-  const res = await fetch('/api/history/'+encodeURIComponent(name)+'/rename',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({new_name:nn})});
-  if(res.ok){ loadHistory(); } else { const d=await res.json().catch(()=>({})); alert(d.detail||'重命名失败'); }
 }
 async function loadTrend(){
   const cv=$('trendCanvas'); if(!cv) return;
@@ -1605,8 +1419,6 @@ document.querySelectorAll('.tab').forEach(t=>t.addEventListener('click',()=>{
   document.querySelectorAll('.panel').forEach(x=>x.classList.remove('active'));
   t.classList.add('active'); $('panel-'+t.dataset.tab).classList.add('active');
   if(t.dataset.tab==='dashboard') loadDashboard();
-  if(t.dataset.tab==='report') loadHistory();
-  if(t.dataset.tab==='rules') loadRules();
   if(t.dataset.tab==='template') loadTemplate();
   if(t.dataset.tab==='settings'){ loadPrompts(); }
 }));
@@ -1616,7 +1428,7 @@ if(!localStorage.getItem('pm_onboard')){ $('onboard').style.display='block'; }
 document.addEventListener('click', e=>{
   if(!e.target.closest('#moveMenu') && !e.target.closest('.tree-item .ghost')) $('moveMenu').style.display='none';
 });
-loadRules(); loadTemplate(); loadPrompts(); loadDashboard();
+loadWorkspace(); loadTemplate(); loadPrompts(); loadDashboard();
 </script>
 </body>
 </html>

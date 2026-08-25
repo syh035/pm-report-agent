@@ -67,7 +67,6 @@
       </div>
     </div>
     <div id="dayList"></div>
-    <div id="opsBox" style="display:none;margin-top:12px;border-top:1px solid var(--border);padding-top:10px;"></div>
   </div>
 </div>
 <script src="/lib/cal.js"></script>
@@ -164,17 +163,25 @@ async function undoSource(){
   loadData();
 }
 async function showOps(){
-  const box = $('opsBox');
-  if(box.style.display === 'block'){ box.style.display='none'; return; }
   const d = await (await fetch('/api/sources/ops')).json();
   const items = d.items||[];
-  box.style.display = 'block';
-  box.innerHTML = `<b style="font-size:13px;">📜 修改记录（${items.length}）</b>` + (items.length ? items.map(o=>`
-    <div class="op-item">
-      <span class="tag ${o.op}">${o.op==='add'?'增添':o.op==='delete'?'删除':o.op==='restore'?'撤销':o.op}</span>
-      <span>${esc(o.filename||'(未知)')}</span>
-      <span style="color:var(--muted);margin-left:auto;">${esc((o.created_at||'').slice(5,16))}</span>
-    </div>`).join('') : '<div class="empty-tip">暂无操作记录</div>');
+  // 小弹窗（modal）展示修改记录
+  const m = document.createElement('div');
+  m.style.cssText = 'position:fixed;left:0;top:0;right:0;bottom:0;background:rgba(0,0,0,.35);z-index:300;overflow:auto;';
+  m.innerHTML = `<div style="background:var(--card,#fff);max-width:520px;margin:90px auto;border-radius:12px;padding:18px;max-height:75vh;overflow-y:auto;">
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;">
+      <b style="font-size:14px;">📜 修改记录（${items.length}）</b>
+      <button style="border:none;background:#F0F2F5;border-radius:8px;padding:3px 12px;cursor:pointer;font-size:13px;" onclick="this.closest('div').parentElement.remove()">✕ 关闭</button>
+    </div>
+    ${items.length ? items.map(o=>`
+      <div class="op-item">
+        <span class="tag ${o.op}">${o.op==='add'?'➕增添':o.op==='delete'?'🗑删除':o.op==='restore'?'↩️撤销':o.op}</span>
+        <span>${esc(o.filename||'(未知)')}</span>
+        <span style="color:var(--muted);margin-left:auto;">${esc((o.created_at||'').slice(5,16))}</span>
+      </div>`).join('') : '<div class="empty-tip">暂无操作记录</div>'}
+  </div>`;
+  document.body.appendChild(m);
+  m.addEventListener('click', e=>{ if(e.target===m) m.remove(); });
 }
 function esc(s){ return String(s??'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
 function viewSource(sid){
