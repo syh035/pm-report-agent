@@ -11,78 +11,181 @@
   h1 { font-size:19px; margin-bottom:4px; }
   .sub { font-size:13px; color:var(--muted); margin-bottom:18px; }
   .back { text-decoration:none; color:var(--primary); font-size:13px; float:right; }
-  .card { background:var(--card); border:1px solid var(--border); border-radius:10px; padding:14px 16px; margin-bottom:14px; }
-  .card h3 { font-size:14px; margin-bottom:6px; }
-  .label { font-size:11px; color:var(--muted); margin:8px 0 4px; }
+  .layout { display:flex; gap:16px; align-items:flex-start; }
+  .purpose-col { width:230px; flex-shrink:0; background:var(--card); border:1px solid var(--border); border-radius:12px; padding:12px; }
+  .purpose-group { border-bottom:1px solid var(--border); padding:4px 0; }
+  .purpose-group:last-child { border-bottom:none; }
+  .pg-head { display:flex; align-items:center; gap:6px; padding:7px 8px; cursor:pointer; border-radius:8px; font-size:13px; font-weight:600; }
+  .pg-head:hover { background:#F0F2F5; }
+  .pg-head .caret { transition:.2s; font-size:11px; color:var(--muted); }
+  .pg-items { padding-left:8px; }
+  .pg-item { padding:5px 10px; font-size:12px; color:var(--muted); cursor:pointer; border-radius:6px; }
+  .pg-item:hover { background:#EEF2FF; color:var(--primary); }
+  .pg-item.active { background:var(--primary); color:#fff; font-weight:600; }
+  .main-col { flex:1; min-width:0; }
+  .card { background:var(--card); border:1px solid var(--border); border-radius:12px; padding:16px 18px; margin-bottom:14px; }
+  .card h3 { font-size:14px; margin-bottom:8px; }
+  .label { font-size:11px; color:var(--muted); margin:10px 0 4px; }
   textarea { width:100%; border:1px solid var(--border); border-radius:6px; padding:8px; font-size:12px; font-family:inherit; }
-  .edited { color:#D97706; font-size:11px; margin-left:8px; }
+  .ph { font-size:11px; color:var(--muted); background:#F7F8FA; border-radius:6px; padding:6px 10px; margin-bottom:4px; }
   .btn { border:none; border-radius:8px; padding:7px 16px; font-size:13px; cursor:pointer; }
   .btn-primary { background:var(--primary); color:#fff; }
+  .btn-outline { background:#fff; border:1px solid var(--border); color:var(--text); }
   .btn-danger { background:var(--danger); color:#fff; }
-  .row { display:flex; gap:8px; margin-top:10px; }
-  .mini { float:right; font-size:11px; padding:3px 10px; background:#F0F2F5; color:var(--text); }
+  .btn-sm { font-size:11px; padding:3px 10px; border-radius:6px; }
+  .edited { color:#D97706; font-size:11px; margin-left:8px; }
+  .ver-item { display:flex; align-items:center; gap:10px; padding:7px 4px; border-bottom:1px dashed var(--border); font-size:12px; }
+  .ver-item:last-child { border-bottom:none; }
+  .ver-item .tag { font-size:10px; background:#EEF2FF; color:var(--primary); border-radius:6px; padding:1px 7px; }
+  .filters { display:flex; gap:8px; margin-bottom:10px; align-items:center; flex-wrap:wrap; }
+  input[type=date] { border:1px solid var(--border); border-radius:6px; padding:4px 8px; font-size:12px; }
+  .empty { color:var(--muted); font-size:12px; padding:10px 4px; }
 </style>
 </head>
 <body>
 <div class="sub" style="display:flex;justify-content:space-between;align-items:center;">
-  <div><h1>提示词库</h1><div>全部 AI 提示词（system / user / few-shot 示例）· 可直接编辑保存，立即生效</div></div>
+  <div><h1>提示词库</h1><div>按用途选择 → 编辑该用途提示词 → 保存即记版本 → 可按日期筛选历史并回退</div></div>
   <a class="back" href="/libraries.html">← 返回数据库中心</a>
 </div>
-<div id="list"></div>
-<div class="row">
-  <button class="btn btn-primary" onclick="saveAll()">保存全部修改</button>
-  <button class="btn btn-danger" onclick="resetAll()">恢复全部默认</button>
-  <span id="msg" style="font-size:12px;color:var(--muted);align-self:center;"></span>
+
+<div class="layout">
+  <!-- 左侧：展开式用途选择 -->
+  <div class="purpose-col" id="purposeCol"></div>
+
+  <!-- 右侧：编辑区 + 历史区 -->
+  <div class="main-col">
+    <div class="card">
+      <h3 id="editTitle">请选择左侧用途</h3>
+      <div id="editArea" style="display:none;">
+        <div class="ph" id="phDocs"></div>
+        <div class="label">SYSTEM（角色与纪律）</div>
+        <textarea rows="3" id="edSystem"></textarea>
+        <div class="label">USER（模板，占位符由系统填充）</div>
+        <textarea rows="8" id="edUser"></textarea>
+        <div class="label">示例 few-shot（多个用 --- 分隔）</div>
+        <textarea rows="3" id="edExamples"></textarea>
+        <div style="display:flex;gap:8px;margin-top:10px;flex-wrap:wrap;">
+          <button class="btn btn-primary" onclick="saveCurrent()">保存（记一个版本）</button>
+          <button class="btn btn-outline" onclick="loadCurrent()">放弃修改重载</button>
+          <button class="btn btn-danger" onclick="resetCurrent()">恢复该项默认</button>
+          <span id="editMsg" style="font-size:12px;color:var(--muted);align-self:center;"></span>
+        </div>
+      </div>
+    </div>
+
+    <div class="card">
+      <h3>版本历史</h3>
+      <div class="filters">
+        <input type="date" id="verDate" onchange="loadHistory()" title="按日期筛选（默认今天）">
+        <button class="btn btn-outline btn-sm" onclick="$('verDate').value='';loadHistory()">全部日期</button>
+        <span id="histInfo" style="font-size:12px;color:var(--muted);"></span>
+      </div>
+      <div id="verList"><div class="empty">请选择左侧用途后查看版本历史</div></div>
+    </div>
+  </div>
 </div>
+
 <script>
 const $ = id => document.getElementById(id);
-let promptState = {};
+let items = [], curKey = '';
+let byPur = {};
+
 async function load(){
   const d = await (await fetch('/api/settings/prompts')).json();
-  const items = d.items||[];
-  promptState = {};
-  $('list').innerHTML = items.map(it=>{
-    promptState[it.key] = { system:it.system, user:it.user, examples:(it.examples||[]).join('\n---\n'),
-      defSystem:it.default_system, defUser:it.default_user, defExamples:(it.default_examples||[]).join('\n---\n') };
-    const ph = Object.keys(it.docs||{}).join(' ');
-    return `<div class="card">
-      <h3>${esc(it.label)}${it.modified?'<span class="edited">(已修改)</span>':''}
-        <button class="btn mini" onclick="resetOne('${it.key}')">恢复该项默认</button>
-      </h3>
-      <div class="label">SYSTEM（角色与纪律）</div>
-      <textarea rows="2" onchange="promptState['${it.key}'].system=this.value">${esc(it.system)}</textarea>
-      <div class="label">USER（模板，占位符：${esc(ph)}）</div>
-      <textarea rows="6" onchange="promptState['${it.key}'].user=this.value">${esc(it.user)}</textarea>
-      <div class="label">示例 few-shot（多个用 --- 分隔）</div>
-      <textarea rows="2" onchange="promptState['${it.key}'].examples=this.value">${esc(promptState[it.key].examples)}</textarea>
-    </div>`;
-  }).join('');
+  items = d.items||[];
+  byPur = {};
+  (d.purposes||[]).forEach(p=>{ byPur[p]=[]; });
+  items.forEach(it=>{ if(!it.hidden && byPur[it.purpose]) byPur[it.purpose].push(it); });
+  renderPurposes();
+  // 默认选中第一个有内容的用途的首项
+  const first = Object.keys(byPur).find(p=>byPur[p].length);
+  if(first) selectPrompt(byPur[first][0].key);
 }
-async function saveAll(){
-  const payload = {};
-  for(const k in promptState){
-    const p = promptState[k];
-    const examples = (p.examples||'').split('\n---\n').map(s=>s.trim()).filter(Boolean);
-    const defEx = (p.defExamples||'').split('\n---\n').map(s=>s.trim()).filter(Boolean);
-    const changed = p.system!==p.defSystem || p.user!==p.defUser || examples.join('|')!==defEx.join('|');
-    if(changed) payload[k] = {system:p.system, user:p.user, examples};
-  }
-  if(!Object.keys(payload).length){ $('msg').textContent='没有修改'; return; }
-  $('msg').textContent='保存中...';
-  const res = await fetch('/api/settings/prompts',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({prompts:payload})});
+function renderPurposes(){
+  const col = $('purposeCol');
+  col.innerHTML = Object.entries(byPur).map(([pur, arr])=>`
+    <div class="purpose-group">
+      <div class="pg-head" onclick="togglePur(this)">
+        <span class="caret">▸</span> ${esc(pur)} <span style="font-size:11px;color:var(--muted);font-weight:400;">(${arr.length})</span>
+      </div>
+      <div class="pg-items" style="display:none;">
+        ${arr.map(it=>`<div class="pg-item ${it.key===curKey?'active':''}" data-key="${it.key}" onclick="selectPrompt('${it.key}')">${esc(it.label)}${it.modified?' <span style="color:#D97706;font-size:10px;">●</span>':''}</div>`).join('')}
+      </div>
+    </div>`).join('');
+  // 默认展开第一个分组
+  const first = col.querySelector('.pg-head');
+  if(first) togglePur(first);
+}
+function togglePur(head){
+  const itemsEl = head.nextElementSibling;
+  const show = itemsEl.style.display === 'none';
+  itemsEl.style.display = show ? 'block' : 'none';
+  head.querySelector('.caret').textContent = show ? '▾' : '▸';
+}
+function selectPrompt(key){
+  curKey = key;
+  const it = items.find(x=>x.key===key);
+  if(!it) return;
+  $('editTitle').innerHTML = `${esc(it.label)}${it.modified?'<span class="edited">(已修改)</span>':''}`;
+  $('editArea').style.display = 'block';
+  $('edSystem').value = it.system;
+  $('edUser').value = it.user;
+  $('edExamples').value = (it.examples||[]).join('\n---\n');
+  $('phDocs').textContent = '占位符：' + (Object.keys(it.docs||{}).join(' ') || '（无）');
+  $('editMsg').textContent = '';
+  document.querySelectorAll('.pg-item').forEach(el=>el.classList.toggle('active', el.dataset.key===key));
+  loadHistory();
+}
+function loadCurrent(){ selectPrompt(curKey); }
+async function saveCurrent(){
+  if(!curKey) return;
+  const examples = $('edExamples').value.split('\n---\n').map(s=>s.trim()).filter(Boolean);
+  $('editMsg').textContent='保存中...';
+  const res = await fetch('/api/settings/prompts',{method:'POST',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({overrides:{[curKey]:{system:$('edSystem').value, user:$('edUser').value, examples}}})});
   const d = await res.json();
-  $('msg').textContent = res.ok ? (d.note||'已保存') : (d.detail||'保存失败');
-  if(res.ok) load();
+  if(!res.ok){ $('editMsg').textContent='保存失败: '+(d.detail||''); return; }
+  $('editMsg').textContent='已保存并记入版本历史';
+  await load(); selectPrompt(curKey);
 }
-async function resetOne(key){
+async function resetCurrent(){
   if(!confirm('恢复该提示词默认？')) return;
-  await fetch('/api/settings/prompts/reset',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({keys:[key]})});
-  load();
+  await fetch('/api/settings/prompts/reset',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({keys:[curKey]})});
+  await load(); selectPrompt(curKey);
 }
-async function resetAll(){
-  if(!confirm('恢复全部默认提示词？')) return;
-  await fetch('/api/settings/prompts/reset',{method:'POST'});
-  load();
+async function loadHistory(){
+  const box = $('verList');
+  if(!curKey){ box.innerHTML='<div class="empty">请选择左侧用途</div>'; return; }
+  const date = $('verDate').value || new Date().toISOString().slice(0,10);   // 默认今天
+  $('verDate').value = date;
+  const d = await (await fetch(`/api/settings/prompts/history?key=${curKey}&date=${date}`)).json();
+  const ver = d.items||[];
+  $('histInfo').textContent = `${date} 共 ${ver.length} 个版本`;
+  box.innerHTML = ver.length ? ver.map(v=>`
+    <div class="ver-item">
+      <span class="tag">#${v.id}</span>
+      <span>${esc((v.created_at||'').slice(11,16))}</span>
+      <span style="color:var(--muted);max-width:50%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${esc((v.user||'').slice(0,50))}</span>
+      <span style="margin-left:auto;display:flex;gap:6px;">
+        <button class="btn btn-outline btn-sm" onclick="viewVersion(${v.id})">查看</button>
+        <button class="btn btn-primary btn-sm" onclick="rollback(${v.id})">回退</button>
+      </span>
+    </div>`).join('') : '<div class="empty">该日期没有版本（保存修改后这里会记录）</div>';
+}
+async function viewVersion(vid){
+  const d = await (await fetch(`/api/settings/prompts/history?key=${curKey}`)).json();
+  const v = (d.items||[]).find(x=>x.id===vid);
+  if(!v) return;
+  alert(`【版本 #${vid}】${v.created_at}\n\nSYSTEM:\n${v.system||'(空)'}\n\nUSER:\n${v.user||'(空)'}\n\nexamples:\n${(v.examples_list||[]).join('\n---\n')||'(空)'}`);
+}
+async function rollback(vid){
+  if(!confirm('回退到该版本？（只影响当前提示词）')) return;
+  const res = await fetch('/api/settings/prompts/rollback',{method:'POST',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({key:curKey, version_id:vid})});
+  const d = await res.json();
+  if(!res.ok){ alert(d.detail||'回退失败'); return; }
+  alert(d.note||'已回退');
+  await load(); selectPrompt(curKey);
 }
 function esc(s){ return String(s??'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
 load();

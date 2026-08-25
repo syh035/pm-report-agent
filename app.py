@@ -637,23 +637,49 @@ def dataset_detail(sid: str):
     return {"source": src, "sections": sections}
 
 
-# ================= 原始库操作（删除/撤销/留痕） =================
-@app.delete("/api/sources/{sid}")
-def delete_source_api(sid: str):
-    """删除源文件（留痕 + 快照，可撤销）。同时清理工作区中关联 sheet。"""
+# ================= 原始库操作（删除/批量/撤销/留痕） =================
+def _delete_source_full(sid: str) -> Optional[str]:
+    """删除源文件（留痕+快照可撤销），清理工作区关联 sheet。返回文件名。"""
     from pmo_report import datastore
     src = datastore.get_source(sid)
     if not src:
-        raise HTTPException(404, "源数据不存在")
+        return None
     datastore.delete_source(sid, keep_snapshot=True)
-    # 工作区中引用该 source 的 sheet 一并移除
     for sk in [s for s, sh in WORKSPACE["sheets"].items() if sh.get("source_id") == sid]:
         del WORKSPACE["sheets"][sk]
         for g in WORKSPACE["groups"].values():
             if sk in g["sheets"]:
                 g["sheets"].remove(sk)
+    return src.get("filename", "")
+
+
+@app.delete("/api/sources/{sid}")
+def delete_source_api(sid: str):
+    """删除源文件（留痕 + 快照，可撤销）。同时清理工作区中关联 sheet。"""
+    fname = _delete_source_full(sid)
+    if not fname:
+        raise HTTPException(404, "源数据不存在")
     _persist_workspace()
-    return {"ok": True, "note": f"已删除「{src['filename']}」（留痕可撤销）", "filename": src["filename"]}
+    return {"ok": True, "note": f"已删除「{fname}」（留痕可撤销）", "filename": fname}
+
+
+class SourceBatchDeleteIn(BaseModel):
+    source_ids: List[str] = []
+
+
+@app.post("/api/sources/batch-delete")
+def batch_delete_sources(payload: SourceBatchDeleteIn):
+    """批量删除源文件（每个都留痕+快照可撤销）。返回删除数量。"""
+    ids = [s.strip() for s in payload.source_ids if s.strip()]
+    if not ids:
+        raise HTTPException(400, "source_ids 不能为空")
+    removed = []
+    for sid in ids:
+        fname = _delete_source_full(sid)
+        if fname:
+            removed.append(fname)
+    _persist_workspace()
+    return {"ok": True, "removed": removed, "note": f"已批量删除 {len(removed)} 个源文件（留痕可撤销）"}
 
 
 @app.post("/api/sources/undo")
@@ -1435,19 +1461,28 @@ def batch_delete_rules(payload: RuleBatchDeleteIn):
 
 class RuleImportTextIn(BaseModel):
     text: str = ""
+    force_type: str = ""   # 可选：requirement(全部按分析) / generation_requirement(全部按生成) / 空=AI自动判断
 
 
 @app.post("/api/rules/import-text")
 def import_rules_text(payload: RuleImportTextIn):
     """一键导入规则文档（txt/md/Word 提取的文本）→ AI 批量理解成多条规则（待确认，不直接写入）。
 
-    返回 {ok, drafts: [规则JSON...], note}。前端逐条确认后调 converse/confirm 写入。"""
+    返回 {ok, drafts: [规则JSON...], note}。前端逐条确认后调 converse/confirm 写入。
+    force_type 非空时强制所有条目为该类型（用户手动指定分析/生成）。"""
     from pmo_report import prompts as prompts_mod
     text = (payload.text or "").strip()
     if not text:
         raise HTTPException(400, "文本为空")
+    force_type = (payload.force_type or "").strip()
     entry = prompts_mod.get_prompt("rule_batch_intent")
-    prompt = prompts_mod.render_user(entry, {"rule_text": text[:8000]})
+    force_hint = ""
+    if force_type == "requirement":
+        force_hint = "用户已指定：本批全部按「分析要求」处理，所有条目的 type 一律填 requirement。"
+    elif force_type == "generation_requirement":
+        force_hint = "用户已指定：本批全部按「生成要求」处理，所有条目的 type 一律填 generation_requirement。"
+    prompt = prompts_mod.render_user(entry, {"rule_text": text[:8000],
+                                             "force_hint": force_hint})
     try:
         out = ai_mod.call_with_cache(
             "rule_batch_intent",
@@ -1670,6 +1705,30 @@ def reset_prompts(payload: Optional[PromptsResetIn] = None):
     else:
         prompts_mod.reset_prompts()
         note = "已恢复全部默认提示词"
+
+
+@app.get("/api/settings/prompts/history")
+def prompts_history(key: str = "", date: str = ""):
+    """提示词版本历史（可按用途key/日期筛选）。"""
+    from pmo_report import datastore
+    return {"items": datastore.list_prompt_versions(key=key, date=date)}
+
+
+class PromptRollbackIn(BaseModel):
+    key: str
+    version_id: int
+
+
+@app.post("/api/settings/prompts/rollback")
+def prompts_rollback(payload: PromptRollbackIn):
+    """回退某提示词到指定版本（只恢复该 key，不影响其他）。"""
+    from pmo_report import prompts as prompts_mod
+    try:
+        prompts_mod.rollback_prompt(payload.key, payload.version_id)
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    return {"ok": True, "items": prompts_mod.prompts_status()["items"],
+            "note": f"已回退「{payload.key}」到指定版本"}
     return {"ok": True, "items": prompts_mod.prompts_status()["items"], "note": note}
 
 

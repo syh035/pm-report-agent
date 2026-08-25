@@ -59,11 +59,12 @@
   </div>
   <div class="list-panel">
     <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px;flex-wrap:wrap;gap:6px;">
-      <h3 style="font-size:14px;" id="listTitle">🗓 当天提交的资料</h3>
+      <h3 style="font-size:14px;" id="listTitle">当天提交的资料</h3>
       <div style="display:flex;gap:6px;flex-wrap:wrap;">
         <button class="op-btn" onclick="addSource()">➕ 增添</button>
         <button class="op-btn" onclick="undoSource()">↩️ 撤销上次</button>
         <button class="op-btn" onclick="showOps()">📜 修改记录</button>
+        <button class="op-btn danger" onclick="batchDelSource()">🗑 批量删除(<span id="selCount">0</span>)</button>
       </div>
     </div>
     <div id="dayList"></div>
@@ -116,10 +117,11 @@ function selectDate(key){
   selDate = key;
   renderCal();
   const list = byDate[key]||[];
-  $('listTitle').textContent = `🗓 ${key||'—'} 提交的资料（${list.length}）`;
-  if(!list.length){ $('dayList').innerHTML = '<div class="empty-tip">当天没有提交资料</div>'; return; }
+  $('listTitle').textContent = `${key||'—'} 提交的资料（${list.length}）`;
+  if(!list.length){ $('dayList').innerHTML = '<div class="empty-tip">当天没有提交资料</div>'; updateSelCount(); return; }
   $('dayList').innerHTML = list.map(it=>`
     <div class="item">
+      <input type="checkbox" class="src-ck" data-id="${it.id}" onchange="toggleSrcSel(this)" style="width:14px;height:14px;accent-color:var(--primary,#4A6CF7);cursor:pointer;">
       <span class="ic">${it.has_dataset?'🗂':'📄'}</span>
       <span class="name" title="${esc(it.filename)}">${esc(it.filename)} ${it.n_sheets?`<span class="group-tag">${it.n_sheets}表</span>`:''}</span>
       <span class="meta">${esc((it.uploaded_at||'').slice(5,16))}</span>
@@ -127,6 +129,27 @@ function selectDate(key){
       <a href="/api/sources/${it.id}/download" download>⬇</a>
       <a href="#" style="color:var(--danger,#C0504D)" onclick="event.preventDefault();delSource('${it.id}')">🗑</a>
     </div>`).join('');
+  updateSelCount();
+}
+let srcSel = {};
+function toggleSrcSel(ch){
+  if(ch.checked) srcSel[ch.dataset.id]=1; else delete srcSel[ch.dataset.id];
+  updateSelCount();
+}
+function updateSelCount(){
+  const el = document.getElementById('selCount');
+  if(el) el.textContent = Object.keys(srcSel).length;
+}
+async function batchDelSource(){
+  const ids = Object.keys(srcSel);
+  if(!ids.length){ alert('请先勾选要删除的源文件'); return; }
+  if(!confirm(`批量删除 ${ids.length} 个源文件？（留痕可撤销）`)) return;
+  const res = await fetch('/api/sources/batch-delete',{method:'POST',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({source_ids: ids})});
+  const d = await res.json();
+  if(!res.ok){ alert('批量删除失败: '+(d.detail||JSON.stringify(d))); return; }
+  alert(d.note||'已删除');
+  srcSel = {}; loadData();
 }
 async function delSource(sid){
   const it = allItems.find(x=>x.id===sid);

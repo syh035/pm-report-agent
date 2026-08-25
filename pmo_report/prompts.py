@@ -169,9 +169,10 @@ PROMPT_DEFAULTS: Dict[str, Dict] = {
             "涉及「周报怎么写/格式/排序/口径」→ generation_requirement（生成要求）；"
             "数值阈值 → rule（value 填数字，key 尽量填对应字段名：风险超期天数→delay_days_danger、进度偏慢阈值→slow_progress_pct、临近预警天数→risk_near_end_days）；"
             "状态词/列名/忽略词 → 对应类型。\n"
+            "{force_hint}"
             "规则文档：\n{rule_text}"
         ),
-        "docs": {"{rule_text}": "用户上传的规则文档文本"},
+        "docs": {"{rule_text}": "用户上传的规则文档文本", "{force_hint}": "用户指定的类型强制说明（空则 AI 自动判断）"},
         "examples": [],
     },
     "ai_analysis": {
@@ -297,8 +298,9 @@ def render_user(entry: Dict, data: Dict[str, str]) -> str:
     return text
 
 
-def save_prompts(overrides: Dict) -> Dict:
-    """保存用户覆盖（只保存被修改的键；examples 可为空列表=清空）。"""
+def save_prompts(overrides: Dict, record_versions: bool = True) -> Dict:
+    """保存用户覆盖（只保存被修改的键；examples 可为空列表=清空）。
+    record_versions=True 时每个被修改的键记一个版本（供历史回退）。"""
     over = _read_overrides()
     for key, o in (overrides or {}).items():
         if key not in PROMPT_DEFAULTS or not isinstance(o, dict):
@@ -314,9 +316,52 @@ def save_prompts(overrides: Dict) -> Dict:
             over[key] = cleaned
         else:
             over.pop(key, None)   # 空覆盖 = 恢复默认
+        if record_versions:
+            try:
+                from . import datastore
+                datastore.save_prompt_version(
+                    key,
+                    str(o.get("system") or ""),
+                    str(o.get("user") or ""),
+                    json.dumps([str(e) for e in (o.get("examples") or [])], ensure_ascii=False),
+                )
+            except Exception:
+                pass
     os.makedirs(os.path.dirname(PROMPTS_FILE), exist_ok=True)
     with open(PROMPTS_FILE, "w", encoding="utf-8") as f:
         json.dump(over, f, ensure_ascii=False, indent=2)
+    return load_prompts()
+
+
+def rollback_prompt(key: str, vid: int) -> Dict:
+    """回退某提示词到指定版本（只恢复该 key 的内容，不影响其他）。"""
+    from . import datastore
+    v = datastore.get_prompt_version(vid)
+    if not v or v.get("key") != key:
+        raise ValueError("版本不存在或不属于该提示词")
+    over = _read_overrides()
+    # 版本内容写入覆盖（空=恢复默认）
+    cleaned = {}
+    if (v.get("system") or "").strip():
+        cleaned["system"] = v["system"]
+    if (v.get("user") or "").strip():
+        cleaned["user"] = v["user"]
+    examples = v.get("examples_list") or []
+    cleaned["examples"] = [str(e) for e in examples]
+    if cleaned:
+        over[key] = cleaned
+    else:
+        over.pop(key, None)
+    os.makedirs(os.path.dirname(PROMPTS_FILE), exist_ok=True)
+    with open(PROMPTS_FILE, "w", encoding="utf-8") as f:
+        json.dump(over, f, ensure_ascii=False, indent=2)
+    # 回退本身也记一版（可再次回退）
+    try:
+        datastore.save_prompt_version(key, str(cleaned.get("system") or ""),
+                                      str(cleaned.get("user") or ""),
+                                      json.dumps(cleaned.get("examples") or [], ensure_ascii=False))
+    except Exception:
+        pass
     return load_prompts()
 
 
@@ -340,8 +385,28 @@ def reset_prompts(keys: Optional[List[str]] = None) -> None:
         pass
 
 
+# 提示词用途分组（前端展开式用途选择用）
+PROMPT_PURPOSE: Dict[str, str] = {
+    "ai_analysis": "分析 AI",
+    "ai_pipeline_filter": "分析 AI",       # 已并入 ai_analysis（隐藏）
+    "ai_pipeline_analyze": "分析 AI",      # 已并入 ai_analysis（隐藏）
+    "dataset_report": "生成 AI",
+    "ai_pipeline_present": "生成 AI",
+    "report_overview": "生成 AI",
+    "template_parse": "模板解析",
+    "template_tune": "模板解析",
+    "enrich_tasks": "解析兜底",
+    "ai_review": "数据校对",
+    "agent_intent": "Agent",
+    "rule_intent": "规则管理",
+    "rule_batch_intent": "规则管理",
+}
+# 已废弃（与 ai_analysis 重叠，用途选择中隐藏但保留代码）
+HIDDEN_PROMTPTS = {"ai_pipeline_filter", "ai_pipeline_analyze"}
+
+
 def prompts_status() -> Dict:
-    """面板展示：每份提示词的当前值/默认值/是否被修改/占位符说明。"""
+    """面板展示：每份提示词的当前值/默认值/是否被修改/占位符说明/用途分组。"""
     cur = load_prompts()
     over_keys = set(_read_overrides().keys())
     items = []
@@ -349,10 +414,13 @@ def prompts_status() -> Dict:
         d = PROMPT_DEFAULTS[key]
         items.append({
             "key": key, "label": e["label"],
+            "purpose": PROMPT_PURPOSE.get(key, "其他"),
+            "hidden": key in HIDDEN_PROMTPTS,
             "system": e["system"], "user": e["user"], "examples": e["examples"],
             "docs": e["docs"],
             "modified": key in over_keys,
             "default_system": d["system"], "default_user": d["user"],
             "default_examples": list(d.get("examples", [])),
         })
-    return {"items": items, "example_sep": "---"}
+    return {"items": items, "example_sep": "---",
+            "purposes": sorted(set(PROMPT_PURPOSE.values()))}

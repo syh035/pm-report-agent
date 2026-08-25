@@ -1062,6 +1062,9 @@ async function parseTemplate(){
   }
 }
 async function tplSaveLib(){
+  // 若仍在编辑模式，先同步编辑框内容
+  const ta = $('tplSrcEdit');
+  if(ta) _tplPendingHtml = ta.value;
   const name=$('tplName').value.trim();
   if(!name){ alert('请填写模板名称'); return; }
   const ttype=$('tplType').value, category=$('tplCategory').value.trim();
@@ -1091,11 +1094,28 @@ async function tplRegenerate(){
   }catch(e){ $('templateMsg').className='msg err'; $('templateMsg').textContent='微调异常: '+e; }
 }
 function tplEditHtml(){
-  const cur = _tplPendingHtml || '';
-  const edited = prompt('直接编辑模板 HTML（可粘贴修改后的内容）：', cur.slice(0,3000));
-  if(edited===null) return;
-  _tplPendingHtml = edited;
-  $('templatePreview').innerHTML = edited || '<div style="color:var(--muted);font-size:12px;">（空）</div>';
+  // 主页面内直接编辑：预览区切换为 HTML 源码编辑框（不再用弹窗）
+  if(!_tplPendingHtml){ alert('请先上传并解析模板'); return; }
+  const box = $('templatePreview');
+  const editArea = document.createElement('div');
+  editArea.id = 'tplEditArea';
+  editArea.innerHTML = `<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;">
+      <span style="font-size:12px;font-weight:600;">模板 HTML 源码（可直接修改）</span>
+      <span>
+        <button class="btn btn-outline" style="font-size:12px;padding:3px 10px" onclick="tplPreviewHtml()">切回预览</button>
+      </span>
+    </div>
+    <textarea rows="18" id="tplSrcEdit" style="width:100%;border:1px solid var(--border);border-radius:8px;padding:10px;font-size:12px;font-family:monospace;white-space:pre-wrap;">${esc(_tplPendingHtml)}</textarea>`;
+  box.innerHTML = '';
+  box.appendChild(editArea);
+  $('tplConfirmMsg').className='msg ok';
+  $('tplConfirmMsg').textContent='编辑后点「确认入库」保存（或切回预览查看效果）';
+}
+function tplPreviewHtml(){
+  // 从编辑框取回内容 → 切回预览
+  const ta = $('tplSrcEdit');
+  if(ta) _tplPendingHtml = ta.value;
+  $('templatePreview').innerHTML = _tplPendingHtml || '<div style="color:var(--muted);font-size:12px;">（空）</div>';
   $('tplConfirmMsg').className='msg ok';
   $('tplConfirmMsg').textContent='已更新，可命名入库';
 }

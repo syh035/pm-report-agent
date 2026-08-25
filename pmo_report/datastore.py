@@ -51,6 +51,10 @@ def _conn() -> sqlite3.Connection:
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         name TEXT, ttype TEXT, category TEXT, html TEXT,
         created_at TEXT)""")
+    c.execute("""CREATE TABLE IF NOT EXISTS prompt_versions(
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        key TEXT, system TEXT, user TEXT, examples TEXT,
+        created_at TEXT)""")
     c.commit()
     return c
 
@@ -398,3 +402,53 @@ def template_categories() -> List[str]:
     with _conn() as c:
         rows = c.execute("SELECT DISTINCT category FROM templates WHERE category<>''").fetchall()
     return [r["category"] for r in rows]
+
+
+# ---------------- 提示词版本历史（每次保存记一版，可回退） ----------------
+def save_prompt_version(key: str, system: str, user: str, examples: str) -> int:
+    """记录一次提示词保存为版本。返回版本 id。"""
+    with _conn() as c:
+        cur = c.execute(
+            "INSERT INTO prompt_versions(key,system,user,examples,created_at) VALUES(?,?,?,?,?)",
+            (key, system or "", user or "", examples or "",
+             datetime.now().strftime("%Y-%m-%d %H:%M:%S")),
+        )
+        return int(cur.lastrowid)
+
+
+def list_prompt_versions(key: str = "", date: str = "", limit: int = 200) -> List[Dict]:
+    """提示词版本历史（可按 key / 日期筛选，新→旧）。date 格式 YYYY-MM-DD。"""
+    sql = "SELECT * FROM prompt_versions WHERE 1=1"
+    args: List = []
+    if key:
+        sql += " AND key=?"
+        args.append(key)
+    if date:
+        sql += " AND substr(created_at,1,10)=?"
+        args.append(date)
+    sql += " ORDER BY id DESC LIMIT ?"
+    args.append(limit)
+    with _conn() as c:
+        rows = c.execute(sql, args).fetchall()
+    out = []
+    for r in rows:
+        d = dict(r)
+        try:
+            d["examples_list"] = json.loads(d["examples"] or "[]")
+        except Exception:
+            d["examples_list"] = []
+        out.append(d)
+    return out
+
+
+def get_prompt_version(vid: int) -> Optional[Dict]:
+    with _conn() as c:
+        r = c.execute("SELECT * FROM prompt_versions WHERE id=?", (vid,)).fetchone()
+    if not r:
+        return None
+    d = dict(r)
+    try:
+        d["examples_list"] = json.loads(d["examples"] or "[]")
+    except Exception:
+        d["examples_list"] = []
+    return d

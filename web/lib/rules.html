@@ -62,6 +62,11 @@
   <div class="converse">
     <input type="file" id="ruleDocFile" accept=".txt,.md,.docx,.pdf,.html,.htm" style="font-size:12px;">
     <button class="btn btn-outline" onclick="extractRuleDoc()">载入文档</button>
+    <select id="ruleImportType" style="font-size:12px;padding:6px 8px;border:1px solid var(--border);border-radius:6px;" title="导入后按指定类型处理（或让 AI 自动判断）">
+      <option value="">类型：AI 自动判断</option>
+      <option value="requirement">全部按「分析要求」</option>
+      <option value="generation_requirement">全部按「生成要求」</option>
+    </select>
     <button class="btn btn-primary" onclick="importRuleDoc()">AI 批量理解</button>
   </div>
   <div id="ruleDocHint" style="font-size:12px;color:var(--muted);"></div>
