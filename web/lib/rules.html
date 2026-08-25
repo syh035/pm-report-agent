@@ -192,33 +192,41 @@ async function saveRulesPatch(patch){
   if(!res.ok){ alert('保存失败: '+(d.detail||JSON.stringify(d))); return; }
   alert('已保存并写入历史'); load();
 }
-async function converse(){
+function converse(){
   const instr = $('ruleIn').value.trim();
   if(!instr){ alert('请输入规则需求'); return; }
-  $('converseMsg').textContent = 'AI 正在理解…';
-  $('draftBox').innerHTML = '';
-  const res = await fetch('/api/rules/converse',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({instruction:instr})});
-  const d = await res.json();
-  if(!res.ok){ $('converseMsg').textContent = '失败: '+(d.detail||JSON.stringify(d)); return; }
-  if(!d.understood){ $('converseMsg').textContent = d.note||'未能理解'; return; }
-  pendingDraft = d.draft;
-  const typeLabel = d.draft.type==='generation_requirement'?'生成要求':d.draft.type==='requirement'?'分析要求':d.draft.type;
-  $('draftBox').innerHTML = `<div class="draft"><b>AI 理解结果（请确认）</b><br>
-    类型：<b>${esc(typeLabel)}</b> ｜ 标题：${esc(d.draft.title)}<br>
-    内容：${esc(d.draft.description)}<br>
-    <div style="margin-top:8px;display:flex;gap:8px;">
-      <button class="btn btn-primary" onclick="confirmDraft()">确认写入</button>
-      <button class="btn btn-outline" onclick="$('draftBox').innerHTML='';pendingDraft=null">取消</button>
-    </div></div>`;
-  $('converseMsg').textContent = d.note||'';
+  $('converseMsg').textContent = '';
+  // 弹出对话窗口：有来有回确认，直到点「确认完成」→ finalize 结构化规则列表
+  openChatBox({
+    purpose: 'rule_dialogue',
+    title: '规则对话（可多轮修正，直到确认完成）',
+    initial: [{role:'user', content: instr}],
+    onFinalize: onRuleFinalize,
+  });
 }
-async function confirmDraft(){
-  if(!pendingDraft) return;
-  const res = await fetch('/api/rules/converse/confirm',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({draft:pendingDraft})});
-  const d = await res.json();
-  if(!res.ok){ alert('写入失败: '+(d.detail||JSON.stringify(d))); return; }
-  alert('已写入: '+(d.applied?.detail||''));
-  pendingDraft=null; $('draftBox').innerHTML=''; $('converseMsg').textContent=''; $('ruleIn').value='';
+async function onRuleFinalize(resultText){
+  // 一条线：对话中 AI 已逐条回显确认，点「确认完成」直接写入，不再二次勾选
+  let drafts = [];
+  try{
+    drafts = JSON.parse(resultText);
+  }catch(e){
+    const m = resultText.match(/\[.*\]/s);
+    drafts = m ? JSON.parse(m[0]) : [];
+  }
+  if(!Array.isArray(drafts) || !drafts.length){
+    alert('AI 未整理出规则，结果：\n'+resultText.slice(0,500));
+    return;
+  }
+  let n=0, failed=[];
+  for(const dr of drafts){
+    const res = await fetch('/api/rules/converse/confirm',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({draft: dr})});
+    const d = await res.json();
+    if(res.ok && d.ok) n++;
+    else failed.push(dr.title||'?');
+  }
+  if(failed.length) alert(`已写入 ${n}/${drafts.length} 条；失败：${failed.join('、')}`);
+  else alert(`已确认写入 ${n} 条规则`);
+  $('converseMsg').textContent=''; $('ruleIn').value='';
   load();
 }
 async function extractRuleDoc(){

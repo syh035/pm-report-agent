@@ -304,7 +304,9 @@ def call_with_cache(site: str, messages: List[Dict[str, str]], **kw) -> str:
     """带磁盘缓存的调用：相同输入命中缓存则 0 Token，否则调用并写入缓存。"""
     model = kw.get("model") or get_model()
     base_url = get_base_url()
-    key = _cache_key(site, model, messages, base_url, **kw)
+    # 生成参数参与缓存键，但 model/base_url 已单独传，需从 kw 剔除避免重复
+    cache_kw = {k: v for k, v in kw.items() if k not in ("model", "base_url")}
+    key = _cache_key(site, model, messages, base_url, **cache_kw)
     hit = _cache_get(key)
     if hit is not None:
         _record_usage(site, 0, 0, cached=True)

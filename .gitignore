@@ -31,3 +31,4 @@ examples/output/
 examples/input/*.pdf
 config/template_history.json
 templates/
+config/ai_dialogue.json

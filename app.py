@@ -1361,6 +1361,59 @@ def rules_converse_confirm(payload: RulesConfirmIn):
             "note": "已确认并写入规则库"}
 
 
+# ================= 通用 AI 对话弹窗（多轮往返 + 按用途配置） =================
+class DialogueChatIn(BaseModel):
+    purpose: str = "rule_dialogue"     # 用途：rule_dialogue / template_tune / rule_doc_import
+    messages: List[Dict] = []          # [{role:user/assistant, content}...] 前端维护（窗口内记忆）
+
+
+class DialogueFinalizeIn(BaseModel):
+    purpose: str = "rule_dialogue"
+    messages: List[Dict] = []
+    extra_context: str = ""
+
+
+class DialogueConfigIn(BaseModel):
+    purpose: str
+    model: str = ""
+    temperature: Optional[float] = None
+    system: str = ""
+
+
+@app.post("/api/dialogue/chat")
+def dialogue_chat(payload: DialogueChatIn):
+    """多轮对话（弹窗窗口内记忆，前端传 messages）。"""
+    from pmo_report.ai_dialogue import dialogue_chat as _chat
+    return _chat(payload.purpose, payload.messages or [], ai_mod)
+
+
+@app.post("/api/dialogue/finalize")
+def dialogue_finalize(payload: DialogueFinalizeIn):
+    """确认完成：AI 把完整对话总结为结构化结果（规则列表/HTML）。"""
+    from pmo_report import prompts as prompts_mod
+    from pmo_report.ai_dialogue import dialogue_finalize as _finalize
+    return _finalize(payload.purpose, payload.messages or [], ai_mod, prompts_mod,
+                     extra_context=payload.extra_context or "")
+
+
+@app.post("/api/dialogue/config")
+def dialogue_config_save(payload: DialogueConfigIn):
+    """保存某用途的对话配置（模型/温度/系统提示词）。"""
+    from pmo_report.ai_dialogue import save_dialogue_config
+    return {"ok": True, "config": save_dialogue_config(
+        payload.purpose, model=payload.model, temperature=payload.temperature,
+        system=payload.system)}
+
+
+@app.get("/api/dialogue/config")
+def dialogue_config_get(purpose: str = "rule_dialogue"):
+    """某用途的当前对话配置。"""
+    from pmo_report.ai_dialogue import get_dialogue_config, DEFAULT_DIALOGUE_SYSTEM
+    return {"purpose": purpose, "config": get_dialogue_config(purpose),
+            "default_system": DEFAULT_DIALOGUE_SYSTEM,
+            "models": ai_mod.SUPPORTED_MODELS}
+
+
 class RuleDeleteIn(BaseModel):
     """删除规则：kind ∈ requirement/generation_requirement/ignore/status_word/column_alias；
     index 为列表下标（requirements 类），key 为映射/忽略词键名。"""

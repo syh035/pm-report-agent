@@ -175,6 +175,18 @@ PROMPT_DEFAULTS: Dict[str, Dict] = {
         "docs": {"{rule_text}": "用户上传的规则文档文本", "{force_hint}": "用户指定的类型强制说明（空则 AI 自动判断）"},
         "examples": [],
     },
+    "dialogue_finalize": {
+        "label": "对话确认总结（finalize）",
+        "system": "你是严谨的结果整理助手。根据完整对话记录，只提取用户明确确认的内容，按指定格式输出。不要编造对话中没有的信息。",
+        "user": (
+            "下面是一段用户与 AI 的对话记录。请按【总结要求】整理出最终结果。\n"
+            "【总结要求】\n{finalize_hint}\n\n"
+            "【对话记录】\n{transcript}\n\n"
+            "只输出要求的格式（JSON 或 HTML），不要解释、不要代码块包裹。"
+        ),
+        "docs": {"{finalize_hint}": "按用途的总结格式要求", "{transcript}": "完整对话记录"},
+        "examples": [],
+    },
     "ai_analysis": {
         "label": "分析 AI（上传时辅助结构化）",
         "system": "你是严谨的数据分析助手，只输出 JSON。所有抽取内容必须来自文档原文，禁止编造。",
