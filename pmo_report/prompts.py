@@ -137,6 +137,55 @@ PROMPT_DEFAULTS: Dict[str, Dict] = {
         "docs": {"{instruction}": "用户用自然语言描述的规则需求"},
         "examples": [],
     },
+    "ai_pipeline_filter": {
+        "label": "AI 主链路·数据筛选",
+        "system": "你是严谨的数据抽取助手，只输出 JSON。",
+        "user": (
+            "下面是一份项目文档的 markdown 内容。请从中抽取结构化数据，输出 JSON：\n"
+            "{\"sections\":[{\"kind\":\"task|risk|issue|decision|milestone|metric\","
+            "\"name\":\"条目名\",\"fields\":{\"关键字段\":\"值\"},\"source_note\":\"来源行片段\"}],"
+            "\"summary\":\"一句话数据概览\"}\n"
+            "要求：\n"
+            "1. 只抽取文档中明确存在的信息；数字/日期/人名必须来自原文，禁止编造。\n"
+            "2. 任务类（任务/成果/计划）→ kind=task；风险/预警 → risk；里程碑 → milestone；"
+            "指标/数值看板 → metric；决策/申请 → decision；依赖/协作 → issue。\n"
+            "3. fields 保留原文中的关键列（进度/负责人/状态/日期/级别/影响等），列名用中文。\n"
+            "4. **控制输出规模**：每个板块最多抽 6 条最重要的；指标板块每条保留本周值/上周值/变化；"
+            "总量控制在 60 条以内，保证 JSON 完整闭合。\n"
+            "5. 只输出 JSON，不要其他文字。\n\n文档内容：\n{document_text}"
+        ),
+        "docs": {"{document_text}": "markitdown 转换后的文档 markdown"},
+        "examples": [],
+    },
+    "ai_pipeline_analyze": {
+        "label": "AI 主链路·数据分析",
+        "system": "你是资深的 PMO 分析专家。基于给定数据做分析，数字只能引用数据中出现过的，禁止编造。",
+        "user": (
+            "请基于以下结构化项目数据，按「工作要求」进行分析，输出一段纯文本分析（3-6 句，结论先行）：\n"
+            "【工作要求】\n{requirements}\n\n"
+            "【结构化数据】\n{data_json}\n\n"
+            "分析要点：进度是否受控、主要风险与影响、需要管理层关注的事项、下一步建议。"
+            "严格约束：文中所有数字/日期必须能在结构化数据中找到。"
+        ),
+        "docs": {"{requirements}": "规则库中的工作要求", "{data_json}": "AI 筛选出的结构化数据 JSON"},
+        "examples": [],
+    },
+    "ai_pipeline_present": {
+        "label": "AI 主链路·文稿呈现",
+        "system": "你是专业的 PMO 周报撰写专家。严格按模板结构输出完整 HTML 周报；所有数字必须来自给定数据，禁止编造。",
+        "user": (
+            "请生成一份{report_type}。要求：\n"
+            "1. 严格按【模板】的章节结构与标题组织（模板有几节就写几节，不要擅自增删章节）。\n"
+            "2. 内容使用【分析结论】的要点 + 【结构化数据】的真实值填充；数字/日期/人名一律来自数据。\n"
+            "3. 输出完整 HTML（h1/h2/p/table/ul/li），不用 markdown 符号，不要代码块包裹。\n\n"
+            "【模板】\n{template_text}\n\n"
+            "【分析结论】\n{analysis}\n\n"
+            "【结构化数据】\n{data_json}"
+        ),
+        "docs": {"{report_type}": "周报/日报", "{template_text}": "周报模板",
+                 "{analysis}": "AI 分析结论", "{data_json}": "结构化数据 JSON"},
+        "examples": [],
+    },
 }
 
 

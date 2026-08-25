@@ -285,6 +285,27 @@
         </div>
       </div>
       <div class="card" style="border-color:var(--primary);">
+        <h2>🤖 AI 主链路（文档 → 筛选 → 分析 → 呈现）</h2>
+        <p style="font-size:12px;color:var(--muted);margin-bottom:10px;">
+          上传任意文档（Excel/Word/PDF）→ markitdown 转 markdown → AI 筛选结构化数据 → 按「规则库工作要求」分析 →
+          按模板生成周报。规则引擎作为兜底；无 Key 时自动回退。
+        </p>
+        <div class="row" style="gap:8px;flex-wrap:wrap;align-items:center;">
+          <select id="pipeSourceSel" style="min-width:220px">
+            <option value="">选择源文件…</option>
+          </select>
+          <select id="pipeTypeSel" style="min-width:120px">
+            <option value="week">📅 周报</option>
+            <option value="day">📆 日报</option>
+          </select>
+          <button class="btn btn-primary" onclick="runAiPipeline()">🚀 运行 AI 主链路</button>
+          <button class="btn btn-outline" style="font-size:12px;padding:4px 10px" onclick="window.open('/lib/rules.html','_blank')">⚙️ 工作要求(规则库)</button>
+        </div>
+        <div class="msg" id="pipeMsg"></div>
+        <div id="pipeDetail" style="font-size:11px;color:var(--muted);margin-top:6px;line-height:1.8;"></div>
+        <div id="pipeReportBox" class="report-content" style="margin-top:10px;min-height:120px;"></div>
+      </div>
+      <div class="card" style="border-color:var(--primary);">
         <h2>📋 模板 + 数据集生成（严格按模板抓数）</h2>
         <p style="font-size:12px;color:var(--muted);margin-bottom:10px;">
           上传周报模板文档（Word/PDF/HTML/txt）＋ 选择多 sheet 数据集（Excel）→ AI 严格按模板章节结构，
@@ -546,6 +567,12 @@ function fillDsSourceSel(items){
   sel.innerHTML = '<option value="">选择数据集源文件…</option>' + (items||[]).map(s=>
     `<option value="${s.id}">${s.has_dataset?'🗂 ':''}${esc(s.filename)}</option>`).join('');
   if(cur && items.some(s=>s.id===cur)) sel.value = cur;
+  // AI 主链路源文件选择：所有源文件（不限数据集）
+  const pipe = $('pipeSourceSel'); if(!pipe) return;
+  const curP = pipe.value;
+  pipe.innerHTML = '<option value="">选择源文件…</option>' + (items||[]).map(s=>
+    `<option value="${s.id}">${s.has_dataset?'🗂 ':''}${esc(s.filename)}</option>`).join('');
+  if(curP && items.some(s=>s.id===curP)) pipe.value = curP;
 }
 async function dsExtractTemplate(){
   const f = $('dsTemplateFile').files[0];
@@ -575,6 +602,30 @@ async function dsGenerateReport(){
       $('dsMsg').innerHTML += `<div style="font-size:11px;color:var(--muted);margin-top:6px;">🧮 数据集关键指标（供核对，AI 生成仅供参考）:<br>${ms}</div>`;
     }
   }catch(e){ $('dsMsg').textContent = '生成异常: '+e; }
+}
+async function runAiPipeline(){
+  const sid = $('pipeSourceSel').value;
+  if(!sid){ alert('请先选择源文件'); return; }
+  const rtype = $('pipeTypeSel').value;
+  $('pipeMsg').textContent = '⏳ AI 主链路运行中（解析→筛选→分析→呈现，可能需要 30~90 秒）…';
+  $('pipeReportBox').innerHTML = '';
+  $('pipeDetail').textContent = '';
+  try{
+    const res = await fetch('/api/ai-pipeline/run',{method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({source_id:sid, report_type:rtype})});
+    const d = await res.json();
+    if(!res.ok){ $('pipeMsg').textContent = '运行失败: '+(d.detail||JSON.stringify(d)); return; }
+    const filt = d.filtered||{};
+    const kinds = {};
+    (filt.sections||[]).forEach(s=>{ kinds[s.kind]=(kinds[s.kind]||0)+1; });
+    const kindStr = Object.entries(kinds).map(([k,v])=>`${k}×${v}`).join('、') || '（无）';
+    $('pipeMsg').textContent = (d.fallback?`⚠️ 已回退数据集生成：${d.note||''}`:`✅ AI 主链路完成（markdown ${d.markdown_len||0} 字符）`);
+    $('pipeDetail').innerHTML =
+      `📥 筛选：${filt.sections?.length||0} 条（${kindStr}）<br>` +
+      `🧠 分析：${esc((d.analysis||'').slice(0,200))}${(d.analysis||'').length>200?'…':''}<br>` +
+      `📝 呈现：${(d.html||'').length} 字 HTML`;
+    $('pipeReportBox').innerHTML = d.html||'';
+  }catch(e){ $('pipeMsg').textContent = '运行异常: '+e; }
 }
 async function viewSource(sid){
   const d = await (await fetch('/api/sources/'+sid)).json();

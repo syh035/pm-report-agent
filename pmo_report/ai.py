@@ -118,8 +118,10 @@ def _cache_set(key: str, value: str) -> None:
     _write_json(CACHE_FILE, store)
 
 
-def _cache_key(site: str, model: str, messages: List[Dict], base_url: str = "") -> str:
-    raw = json.dumps({"site": site, "model": model, "base_url": base_url, "messages": messages}, ensure_ascii=False)
+def _cache_key(site: str, model: str, messages: List[Dict], base_url: str = "", **kw) -> str:
+    # 生成参数（max_tokens/temperature 等）也参与缓存键：调整参数不会命中旧缓存
+    raw = json.dumps({"site": site, "model": model, "base_url": base_url,
+                      "messages": messages, "params": kw}, ensure_ascii=False)
     return hashlib.sha1(raw.encode("utf-8")).hexdigest()
 
 
@@ -302,7 +304,7 @@ def call_with_cache(site: str, messages: List[Dict[str, str]], **kw) -> str:
     """带磁盘缓存的调用：相同输入命中缓存则 0 Token，否则调用并写入缓存。"""
     model = kw.get("model") or get_model()
     base_url = get_base_url()
-    key = _cache_key(site, model, messages, base_url)
+    key = _cache_key(site, model, messages, base_url, **kw)
     hit = _cache_get(key)
     if hit is not None:
         _record_usage(site, 0, 0, cached=True)

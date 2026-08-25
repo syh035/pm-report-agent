@@ -136,6 +136,29 @@ class ReportGenerator:
         if os.path.exists(CUSTOM_BLOCKS_FILE):
             os.remove(CUSTOM_BLOCKS_FILE)
 
+    @staticmethod
+    def get_template_text() -> str:
+        """读取当前生效的模板文本（HTML 模板原文；blocks 模板返回空并提示）。"""
+        if os.path.exists(CUSTOM_TEMPLATE_FILE):
+            try:
+                with open(CUSTOM_TEMPLATE_FILE, "r", encoding="utf-8") as f:
+                    return f.read()
+            except Exception:
+                pass
+        # 默认模板：用内置默认 blocks 渲染一个文本骨架
+        try:
+            blocks = ReportGenerator.load_blocks_template()
+            if blocks:
+                lines = []
+                for b in blocks:
+                    t = (b.get("title") or "").strip()
+                    if t:
+                        lines.append(t)
+                return "\n".join(lines)
+        except Exception:
+            pass
+        return "一、总体进展\n二、关键数据\n三、风险与问题\n四、下周计划"
+
     # ---- HTML 渲染（规则层） ----
     def _stats_html(self, stats: ProjectStats, rules: Dict = None) -> str:
         """核心数据 HTML 表格。可用规则颜色高亮风险/偏慢。"""

@@ -970,6 +970,83 @@ def dataset_report(payload: DatasetReportIn):
             "sections": [s["section"] for s in sections], "metrics": metrics}
 
 
+class AiPipelineIn(BaseModel):
+    """AI 主导主链路输入：上传的源文件 + 可选模板文本 + 报告类型。"""
+    source_id: str
+    template_text: str = ""
+    report_type: str = "week"
+
+
+@app.post("/api/ai-pipeline/run")
+def ai_pipeline_run(payload: AiPipelineIn):
+    """AI 主导主链路：markitdown 转 markdown → AI 筛选 → AI 分析 → AI 呈现。
+    无 API Key 或任一环节失败 → 回退规则引擎（用现有数据集/模板路径生成）。
+    返回 {ok, used_ai, markdown_len, filtered, analysis, html, fallback}。"""
+    from pmo_report import datastore, prompts as prompts_mod
+    from pmo_report.ai_pipeline import doc_to_markdown, ai_filter_data, ai_analyze, ai_present
+    src = datastore.get_source(payload.source_id)
+    if not src or not os.path.exists(src.get("stored_path", "")):
+        raise HTTPException(404, "源数据不存在")
+    # 1) 解析层：markitdown 转 markdown
+    try:
+        md_text = doc_to_markdown(src["stored_path"])
+    except Exception as e:
+        raise HTTPException(500, f"文档转 markdown 失败: {e}")
+    if not md_text.strip():
+        raise HTTPException(400, "文档内容为空（无法转换）")
+    # 2~4) AI 三环节；失败回退规则引擎
+    try:
+        structured = ai_filter_data(md_text, ai_mod, prompts_mod)
+        reqs = rules_mod.load_rules().get("requirements") or []
+        analysis = ai_analyze(structured, reqs, ai_mod, prompts_mod)
+        template = (payload.template_text or "").strip()
+        if not template:
+            try:
+                from pmo_report.report import ReportGenerator
+                template = ReportGenerator.get_template_text()
+            except Exception:
+                template = ""
+        html = ai_present(analysis, structured, template, ai_mod, prompts_mod,
+                          report_type=payload.report_type)
+        if "<" not in html or ">" not in html:
+            raise RuntimeError("AI 未产出有效 HTML")
+        return {"ok": True, "used_ai": True, "markdown_len": len(md_text),
+                "filtered": structured, "analysis": analysis, "html": html, "fallback": False}
+    except Exception as e:
+        # 回退：无 Key / AI 失败 → 用数据集/规则引擎路径
+        try:
+            sections = datastore.get_dataset_sections(payload.source_id)
+            if sections:
+                from pmo_report.dataset import sections_to_markdown
+                ds_text = sections_to_markdown(sections)
+            else:
+                ds_text = md_text
+            template = (payload.template_text or "").strip()
+            if not template:
+                from pmo_report.report import ReportGenerator
+                template = ReportGenerator.get_template_text()
+            entry = prompts_mod.get_prompt("dataset_report")
+            prompt = prompts_mod.render_user(entry, {"template_text": template[:8000],
+                                                     "dataset_text": ds_text[:20000]})
+            out = ai_mod.call_with_cache(
+                "dataset_report",
+                [{"role": "system", "content": entry.get("system", "")},
+                 {"role": "user", "content": prompt}],
+                temperature=0.3, max_tokens=4000,
+            )
+            out = (out or "").strip()
+            if out.startswith("```"):
+                out = re.sub(r"^```(?:html)?\s*", "", out)
+                out = re.sub(r"```\s*$", "", out)
+            if "<" not in out or ">" not in out:
+                raise RuntimeError("fallback 也未产出 HTML")
+            return {"ok": True, "used_ai": True, "markdown_len": len(md_text),
+                    "filtered": None, "analysis": "", "html": out, "fallback": True,
+                    "note": f"AI 主链路失败（{str(e)[:150]}），已回退数据集生成"}
+        except Exception as e2:
+            raise HTTPException(502, f"AI 生成失败且回退失败: {e2}")
+
+
 @app.post("/api/export/tasks")
 def export_tasks(payload: ExportTasksIn):
     """导出任务明细为 CSV（utf-8-sig，Excel 打开不乱码）。"""
