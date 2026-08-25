@@ -982,21 +982,40 @@ function dashCfgPick(cfg, key, list, defOrder){
 }
 function customizeDashboard(){
   const cfg = getDashConfig();
-  const kpiNames = ['条目总数','重点关注'];
-  const zoneNames = ['重点关注','高风险','待补充','需协调'];
   const kindNames = ['metric','task','risk','milestone','decision','issue','raw'];
-  // 描述当前可定制内容，让 AI 有据可依
-  const inventory = '当前看板可定制项：\n'
-    + '· KPI 卡：' + kpiNames.join('、') + '（可排序/隐藏/改颜色，颜色给十六进制）\n'
-    + '· 置顶性质专区：' + zoneNames.join('、') + '（可排序/隐藏/改标题/改副文案）\n'
-    + '· 分类区块：' + kindNames.join('、') + '（可排序/隐藏）\n'
-    + '当前配置：' + JSON.stringify(cfg);
-  openChatBox({
-    purpose: 'dashboard_custom',
-    title: '定制看板（对话式调整 KPI/专区/分类，确认完成生效）',
-    initial: [{role:'user', content: '我想定制看板。' + inventory + '\n\n请根据我的要求调整看板布局。'}],
-    extraContext: '看板配置格式与可定制项说明：' + inventory,
-    onFinalize: onDashCustomFinalize,
+  // 从配置库读取真实可定制项（分析要求性质清单 + 处理约定参数 + 生成要求），只读注入
+  fetch('/api/rules').then(r=>r.json()).then(d=>{
+    const rules = d.rules||{};
+    const reqs = rules.requirements||[];
+    const zoneNames = reqs.map(r=>String(r.title||'').trim()).filter(Boolean);
+    const zoneDesc = reqs.length ? reqs.map(r=>`「${r.title}」：${r.description||''}`).join('\n') : '（无，可先到规则库添加分析要求）';
+    const procParts = [];
+    if(rules.delay_days_danger) procParts.push(`超期${rules.delay_days_danger}天→高风险`);
+    if(rules.risk_near_end_days) procParts.push(`结束前${rules.risk_near_end_days}天未完成→关注`);
+    if(rules.slow_progress_pct) procParts.push(`进度落后${rules.slow_progress_pct}pp→偏慢`);
+    const genReqs = rules.generation_requirements||[];
+    const inventory = '当前看板可定制项（来自配置库，只读）：\n'
+      + '· KPI 卡：条目总数、各性质计数、各分类计数（可排序/隐藏/改颜色，颜色给十六进制）\n'
+      + '· 置顶性质专区：' + (zoneNames.join('、')||'（暂无）') + '（可排序/隐藏/改标题/改副文案）\n'
+      + '· 分类区块：' + kindNames.join('、') + '（可排序/隐藏）\n\n'
+      + '【性质定义】每条性质即一条分析要求：\n' + zoneDesc + '\n'
+      + (procParts.length ? '【处理约定参数】' + procParts.join('；') + '\n' : '')
+      + (genReqs.length ? '【生成要求】' + genReqs.map(r=>`「${r.title}」：${r.description||''}`).join('；') + '\n' : '')
+      + '当前看板配置：' + JSON.stringify(cfg);
+    openChatBox({
+      purpose: 'dashboard_custom',
+      title: '定制看板（对话式调整 KPI/专区/分类，确认完成生效）',
+      initial: [{role:'user', content: '我想定制看板。' + inventory + '\n\n请根据我的要求调整看板布局。'}],
+      extraContext: '看板配置格式与可定制项说明（配置库只读，不要修改配置库）：' + inventory,
+      onFinalize: onDashCustomFinalize,
+    });
+  }).catch(()=>{
+    openChatBox({
+      purpose: 'dashboard_custom',
+      title: '定制看板（对话式调整 KPI/专区/分类，确认完成生效）',
+      initial: [{role:'user', content: '我想定制看板。请根据我的要求调整看板布局。'}],
+      onFinalize: onDashCustomFinalize,
+    });
   });
 }
 async function onDashCustomFinalize(resultText){

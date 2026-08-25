@@ -50,7 +50,9 @@ PURPOSE_FINALIZE_HINT: Dict[str, str] = {
         '"kind_order":["risk","task",...],"kind_hidden":["metric",...]}\n'
         "字段说明：kpi_order/kpi_hidden 控制 KPI 卡的顺序与隐藏；zone_* 控制置顶性质专区的顺序/隐藏/标题/副文案；"
         "kind_order/kind_hidden 控制分类区块（risk/task/metric/milestone/decision/issue/raw）的顺序与隐藏。"
-        "只包含用户明确要求的改动；用户没提的保持原样（对应字段省略或为空数组）。"
+        "只包含用户明确要求的改动；用户没提的保持原样（对应字段省略或为空数组）。\n"
+        "重要：本任务只定制看板展示（顺序/隐藏/颜色/文案），配置库（分析要求/处理约定参数/生成要求）为只读上下文，"
+        "不要输出任何修改配置库的内容；若用户要求改配置库，请在输出 JSON 的备注字段 \"note\" 中提示用户去规则库修改。"
     ),
 }
 
