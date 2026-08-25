@@ -57,6 +57,36 @@
   .history-list{list-style:none;} .history-list li{display:flex;justify-content:space-between;align-items:center;padding:7px;border-bottom:1px solid var(--border);font-size:13px;}
   .filters{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:10px;} .filters select,.filters input{border:1px solid var(--border);border-radius:5px;padding:5px 8px;font-size:12px;}
   .color-dot{display:inline-block;width:16px;height:16px;border-radius:4px;vertical-align:middle;border:1px solid #ccc;}
+  /* —— 看板（impeccable × build-dashboard 设计语言） —— */
+  .dash-kpis { display:grid; grid-template-columns:repeat(auto-fit,minmax(150px,1fr)); gap:12px; margin-bottom:16px; }
+  .dash-kpi { background:var(--card); border:1px solid var(--border); border-radius:12px; padding:14px 16px 12px;
+              box-shadow:0 1px 3px rgba(20,30,60,.05), 0 4px 14px rgba(20,30,60,.04); transition:transform .12s ease, box-shadow .12s ease; }
+  .dash-kpi:hover { transform:translateY(-1px); box-shadow:0 2px 6px rgba(20,30,60,.08), 0 8px 22px rgba(20,30,60,.07); }
+  .dash-kpi .l { font-size:11px; color:var(--muted); letter-spacing:.02em; }
+  .dash-kpi .v { font-size:26px; font-weight:700; margin:2px 0 1px; font-variant-numeric:tabular-nums; }
+  .dash-kpi .s { font-size:11px; color:var(--muted); }
+  .dash-kind { background:var(--card); border:1px solid var(--border); border-radius:12px; padding:16px 18px; margin-bottom:16px;
+               box-shadow:0 1px 3px rgba(20,30,60,.05); }
+  .dash-kind-head { display:flex; align-items:center; gap:8px; margin-bottom:12px; }
+  .dash-kind-dot { width:10px; height:10px; border-radius:3px; flex:none; }
+  .dash-kind-head b { font-size:15px; }
+  .dash-kind-head .cnt { margin-left:auto; font-size:12px; color:var(--muted); background:var(--bg); border:1px solid var(--border);
+                         border-radius:20px; padding:2px 10px; font-variant-numeric:tabular-nums; }
+  .dash-sec { font-size:12px; font-weight:600; color:var(--muted); margin:12px 0 8px; display:flex; align-items:center; gap:6px; }
+  .dash-sec::before { content:''; width:14px; height:2px; border-radius:2px; background:var(--border); flex:none; }
+  .dash-items { display:grid; grid-template-columns:repeat(auto-fill,minmax(300px,1fr)); gap:10px; }
+  .dash-item { border:1px solid var(--border); border-radius:10px; padding:10px 12px; background:var(--card);
+               transition:border-color .12s ease, box-shadow .12s ease, background .12s ease; }
+  .dash-item:hover { border-color:var(--accent,#4A6CF7); box-shadow:0 2px 10px rgba(74,108,247,.10); background:#FCFDFF; }
+  body.dark .dash-item:hover { background:#262936; }
+  .dash-item .nm { font-size:13px; font-weight:600; color:var(--text); display:flex; align-items:center; gap:6px; flex-wrap:wrap; }
+  .dash-item .fs { margin-top:5px; display:flex; flex-wrap:wrap; gap:4px 12px; font-size:11px; color:var(--muted); }
+  .dash-item .fs b { color:var(--text); font-weight:600; font-variant-numeric:tabular-nums; }
+  .dash-item .fs .k { color:var(--muted); }
+  .dash-item .fs .tl { color:var(--text); }
+  .dash-tag { display:inline-block; font-size:10px; border-radius:6px; padding:1px 6px; font-weight:600; color:#fff; }
+  .dash-empty { border:1px dashed var(--border); border-radius:12px; padding:28px 20px; text-align:center; color:var(--muted);
+                font-size:13px; background:var(--card); }
   /* 深色模式（body.dark 覆盖 CSS 变量） */
   body.dark{--primary:#6B8AFF;--primary-dark:#5A76E8;--bg:#17181F;--card:#20222B;--border:#34374A;--text:#E8EAF2;--muted:#9AA0B5;}
   body.dark .dropzone{background:#1B1D26;} body.dark th{background:#1B1D26;}
@@ -135,6 +165,7 @@
           <span id="dashMeta" style="font-size:12px;color:var(--muted);margin-left:auto;"></span>
         </div>
       </div>
+      <div id="dashKpis" class="dash-kpis"></div>
       <div id="dashGlobal"></div>
       <div id="dashGroups"></div>
     </div>
@@ -307,6 +338,7 @@ async function uploadFiles(files){
   let fd = new FormData();
   for(const f of files) fd.append('files', f);
   if(mode === 'overwrite') fd.append('overwrite', 'true');
+  else if(mode === 'rename') fd.append('rename', 'true');
   const res = await fetch('/api/workspace/load',{method:'POST',body:fd});
   const d = await res.json();
   if(!res.ok){ alert('解析失败: '+JSON.stringify(d)); return; }
@@ -747,43 +779,99 @@ async function loadTrend(){
   }catch(e){ $('trendMsg').textContent='趋势加载失败'; }
 }
 
-// ============ 看板（按 skill 设计语言：KPI卡带涨跌/迷你趋势、升即坏反色、分组独立成区） ============
-const GOOD = '#4A7A1E', BAD = '#A33A37', GRAY = '#9AA0B5';
-// ============ 看板（只展示 AI 提取条目） ============
+// ============ 看板（impeccable × build-dashboard：KPI 卡 + 分类区块 + 字段自适应卡片） ============
+const KIND_COLOR = {task:'#2563EB', risk:'#A33A37', issue:'#0E7490', decision:'#D97706',
+                    milestone:'#8B5CF6', metric:'#4A7A1E', raw:'#6B7280'};
+const KIND_LABEL = {task:'任务', risk:'风险', issue:'依赖/问题', decision:'决策',
+                    milestone:'里程碑', metric:'指标', raw:'原始'};
+// 字段自适应：进度/状态/数值优先展示，长文本整段展示，其余 key: value 芯片
+function dashItemFields(p){
+  const fields = (p&&p.fields)||{};
+  const entries = Object.entries(fields).length ? Object.entries(fields)
+    : Object.entries(p||{}).filter(([k])=>!['section','source_line','fields'].includes(k));
+  if(!entries.length) return '';
+  const prog = entries.find(([k])=>/进度|完成度|progress/i.test(k));
+  const stat = entries.find(([k])=>/状态|status/i.test(k));
+  const long = entries.filter(([,v])=>String(v).length>50);
+  const chips = entries.filter(([k])=>k!==(prog&&prog[0]) && k!==(stat&&stat[0]))
+    .slice(0,4).map(([k,v])=>{
+      const s = String(v);
+      if(s.length>40) return `<span class="tl">${esc(s.slice(0,40))}${s.length>40?'…':''}</span>`;
+      return `<span><span class="k">${esc(k)}</span> <b>${esc(s)}</b></span>`;
+    }).join('');
+  let html = '';
+  if(prog) html += `<span><span class="k">${esc(prog[0])}</span> <b>${esc(String(prog[1]).slice(0,24))}</b></span>`;
+  if(stat) html += `<span><span class="k">${esc(stat[0])}</span> <b>${esc(String(stat[1]).slice(0,20))}</b></span>`;
+  html += chips;
+  if(long.length){
+    const text = long.map(([k,v])=>`${k}：${v}`).join('；');
+    html += `<div class="tl" style="width:100%;margin-top:2px;">${esc(text.slice(0,120))}${text.length>120?'…':''}</div>`;
+  }
+  return html;
+}
+function dashTag(p){
+  const f = (p&&p.fields)||{};
+  const risk = f['风险等级']||f['risk_level']||f['风险']||'';
+  if(/高|严重/.test(String(risk))) return `<span class="dash-tag" style="background:#A33A37">高风险</span>`;
+  if(/中|关注|警告/.test(String(risk))) return `<span class="dash-tag" style="background:#E65100">关注</span>`;
+  if(/完成|达标/.test(String(f['状态']||f['status']||''))) return `<span class="dash-tag" style="background:#2E7D32">完成</span>`;
+  return '';
+}
+function dashKpiHtml(label, value, sub, color){
+  return `<div class="dash-kpi"><div class="l">${esc(label)}</div>
+    <div class="v" style="color:${color}">${esc(value)}</div>
+    ${sub?`<div class="s">${esc(sub)}</div>`:''}</div>`;
+}
 async function loadDashboard(){
   try{
     const d = await (await fetch('/api/dashboard')).json();
-    const summary = Object.entries(d.items_summary||{}).map(([k,v])=>`${k} ${v}`).join('、');
+    const kinds = d.kinds||[];
+    const total = kinds.reduce((a,k)=>a+(k.total||0),0);
+    const srcCount = Object.keys(d.by_source||{}).length;
     $('dashMeta').textContent = d.has_ai_data
-      ? `分类仓 ${summary||'空'} ｜ 已分析源 ${Object.keys(d.by_source||{}).length} 个`
+      ? `共 ${total} 条 AI 提取 ｜ ${srcCount} 个源文件`
       : '⚠️ 尚未配置 AI Key 或未分析 —— 上传文件并配置 Key 后自动分析入库';
+    const kpiBox = $('dashKpis');
+    const gBox = $('dashGlobal');
     if(!d.has_ai_data){
-      $('dashGlobal').innerHTML = '<div class="card" style="margin-bottom:14px;"><div style="font-size:13px;color:var(--muted);">暂无 AI 提取数据。请先配置 AI Key（AI 配置库），然后重新上传源文件（上传即自动分析）。</div></div>';
+      kpiBox.innerHTML = '';
+      gBox.innerHTML = '<div class="dash-empty">暂无 AI 提取数据。请先配置 AI Key（AI 配置库），然后重新上传源文件（上传即自动分析）。</div>';
       $('dashGroups').innerHTML = '';
       return;
     }
-    $('dashGlobal').innerHTML = (d.kinds||[]).map(k=>{
+    // KPI 行：总数 + 各分类计数（分类用其主色）
+    const kpiOrder = ['metric','task','risk','milestone','decision'];
+    let kpiHtml2 = dashKpiHtml('条目总数', total, srcCount+' 个源文件', 'var(--primary)');
+    kpiOrder.forEach(kind=>{
+      const k = kinds.find(x=>x.kind===kind);
+      if(k && k.total>0) kpiHtml2 += dashKpiHtml(KIND_LABEL[kind]||kind, k.total, '', KIND_COLOR[kind]||'var(--text)');
+    });
+    kpiBox.innerHTML = kpiHtml2;
+    // 分类区块：每个分类一个圆角卡，板块为小节，条目为字段自适应卡片
+    gBox.innerHTML = kinds.map(k=>{
+      const color = KIND_COLOR[k.kind]||'#6B7280';
       const secHtml = (k.sections||[]).map(s=>`
-        <div style="margin-top:8px;">
-          <div style="font-size:12px;font-weight:600;color:var(--muted);">${esc(s.name||'')}</div>
-          <div style="display:flex;flex-wrap:wrap;gap:6px;margin-top:4px;">
-            ${s.items.map(it=>{
-              const p = it.payload||{};
-              const detail = Object.entries(p).filter(([kk])=>!['section','source_line','fields'].includes(kk)).slice(0,3)
-                .map(([kk,vv])=>`<span style="color:var(--muted)">${esc(kk)}:</span> ${esc(String(vv).slice(0,30))}`).join(' · ');
-              const fields = p.fields ? Object.entries(p.fields).slice(0,4).map(([kk,vv])=>`<span style="color:var(--muted)">${esc(kk)}:</span> ${esc(String(vv).slice(0,24))}`).join(' · ') : '';
-              return `<div style="border:1px solid var(--border);border-radius:8px;padding:6px 10px;font-size:12px;background:#fff;max-width:340px;">
-                <b>${esc(it.name)}</b><br><span style="font-size:11px;">${detail||fields||'—'}</span></div>`;
-            }).join('')}
-          </div>
+        <div class="dash-sec" style="color:var(--muted)">${esc(s.name||'（未分板块）')}</div>
+        <div class="dash-items">
+          ${s.items.map(it=>{
+            const p = it.payload||{};
+            return `<div class="dash-item" style="--accent:${color}">
+              <div class="nm">${esc(it.name)}${dashTag(p)}</div>
+              <div class="fs">${dashItemFields(p)||'<span class="k">—</span>'}</div>
+            </div>`;
+          }).join('')}
         </div>`).join('');
-      return `<div class="card" style="margin-bottom:14px;">
-        <h2 style="margin-bottom:4px;">${esc(k.label)}（${k.total}）</h2>
+      return `<div class="dash-kind">
+        <div class="dash-kind-head">
+          <span class="dash-kind-dot" style="background:${color}"></span>
+          <b>${esc(k.label||k.kind)}</b>
+          <span class="cnt">${k.total||0} 条</span>
+        </div>
         ${secHtml||'<div style="font-size:12px;color:var(--muted);">（无条目）</div>'}
       </div>`;
     }).join('');
     $('dashGroups').innerHTML = '';
-  }catch(e){ $('dashGlobal').innerHTML='<div class="card">看板加载失败：'+esc(e.message)+'</div>'; }
+  }catch(e){ $('dashGlobal').innerHTML='<div class="dash-empty">看板加载失败：'+esc(e.message)+'</div>'; }
 }
 
 // ============ 深色模式 / 首次引导 ============

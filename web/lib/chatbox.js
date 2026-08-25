@@ -39,10 +39,10 @@ function openChatBox(opts){
   document.body.appendChild(m);
   _chatbox = { m, opts, messages, busy:false };
   renderChatMsgs();
-  // 预置首条消息自动发送
+  // 预置首条消息自动发送（从消息队列直接发，不走输入框；先弹出队列中的副本避免重复）
   if(messages.length){
     const last = messages[messages.length-1];
-    if(last.role==='user'){ renderChatMsgs(); chatSend(); }
+    if(last.role==='user'){ _chatbox.messages.pop(); chatSend(last.content); }
   }
 }
 function closeChatBox(){ if(_chatbox && _chatbox.m){ _chatbox.m.remove(); } _chatbox=null; }
@@ -59,10 +59,10 @@ function renderChatMsgs(){
   }).join('') || '<div style="color:var(--muted,#6B6B80);font-size:12px;text-align:center;padding:40px 0;">开始对话吧</div>';
   box.scrollTop = box.scrollHeight;
 }
-async function chatSend(){
+async function chatSend(prefill){
   if(!_chatbox || _chatbox.busy) return;
   const inp = document.getElementById('chatInput');
-  const text = (inp.value||'').trim();
+  const text = (prefill != null && prefill !== '') ? String(prefill).trim() : (inp.value||'').trim();
   if(!text) return;
   inp.value='';
   _chatbox.messages.push({role:'user', content:text});

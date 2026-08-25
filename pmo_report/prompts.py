@@ -226,10 +226,17 @@ def render_user(entry: Dict, data: Dict[str, str]) -> str:
                   "placeholders", "force_hint", "finalize_hint", "transcript",
                   "report_type", "tune_request", "template_html"):
             if k in d and d[k]:
-                # 模板含对应占位符则保留直接替换，否则进其它参数
+                # 模板含对应占位符则保留直接替换，否则按固定小节渲染（不再堆进其它参数）
                 if "{" + k + "}" in text:
                     continue
-                extra.append(f"{k}={d[k]}")
+                if k == "requirements":
+                    parts.append("【分析要求】\n" + str(d[k]))
+                elif k == "generation_requirements":
+                    parts.append("【生成要求】\n" + str(d[k]))
+                elif k == "processing_rules":
+                    parts.append("【处理约定】\n" + str(d[k]))
+                else:
+                    extra.append(f"{k}={d[k]}")
         if extra:
             parts.append("【其它参数】\n" + "\n".join(extra))
         d["task_input"] = "\n\n".join(parts) if parts else "（无输入内容）"

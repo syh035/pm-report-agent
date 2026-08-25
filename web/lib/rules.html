@@ -74,7 +74,7 @@
 </div>
 
 <div class="card">
-  <h3>分析要求（requirements — 数据筛选/抽取时的要求）
+  <h3>分析要求（requirements — 数据筛选/抽取时的要求，含参数约定）
     <button class="btn btn-danger btn-sm" style="float:right" onclick="batchDel('requirement')">批量删除选中</button>
   </h3>
   <div id="reqList"></div>
@@ -87,11 +87,6 @@
   <div id="genReqList"></div>
 </div>
 
-<div class="card">
-  <h3>处理约定（分析 AI 遇到这些情况时按此处理；点击数值可修改）</h3>
-  <div id="rulesList"></div>
-</div>
-
 <script src="/lib/chatbox.js"></script>
 <script>
 const $ = id => document.getElementById(id);
@@ -101,15 +96,23 @@ let reqSel = {}, genSel = {};   // 批量删除勾选
 async function load(){
   const d = await (await fetch('/api/rules')).json();
   rules = d.rules||{}; meta = d.meta||{};
-  // 分析要求
+  // 分析要求 = 参数约定条目（引擎参数转条目，可修改/删除）+ 用户要求
   const reqs = rules.requirements||[];
-  $('reqList').innerHTML = reqs.length ? reqs.map((r,ri)=>`
-    <div class="req"><label style="display:flex;align-items:flex-start;gap:8px;cursor:pointer;">
-      <input type="checkbox" class="ck" data-req="${ri}" onchange="toggleSel('req',${ri},this.checked)">
-      <span style="flex:1;"><b>${esc(r.title)}</b> <span class="tag">${esc(r.scope||'全部')}</span><span class="tag">${esc(r.applies_to||'全部')}</span>
-      <div>${esc(r.description)}</div></span></label>
-      <button class="btn btn-danger btn-sm" onclick="delRule('requirement',${ri})">删除</button></div>`).join('')
-    : '<div style="color:var(--muted);font-size:13px;">暂无分析要求</div>';
+  const paramReqs = paramReqEntries(rules);
+  const allReqs = [...paramReqs, ...reqs];
+  $('reqList').innerHTML = allReqs.length ? allReqs.map((r,ri)=>{
+    const isParam = !!r._param;
+    const userIdx = ri - paramReqs.length;   // 用户要求在原数组中的下标
+    return `<div class="req"><label style="display:flex;align-items:flex-start;gap:8px;cursor:pointer;">
+      <input type="checkbox" class="ck" data-req="${ri}" ${isParam?'disabled':''} onchange="toggleSel('req',${userIdx},this.checked)">
+      <span style="flex:1;"><b>${esc(r.title)}</b>${isParam?'<span class="tag">参数约定</span>':'<span class="tag">'+esc(r.scope||'全部')+'</span><span class="tag">'+esc(r.applies_to||'全部')+'</span>'}
+      <div>${esc(r.description)}</div>
+      ${isParam?`<div class="meta">参数约定随分析要求一起注入分析 AI（对应 ${esc(paramKeyLabel(r._param))}）</div>`:''}</span></label>
+      ${isParam
+        ? `<span style="display:flex;gap:6px;"><button class="btn btn-outline btn-sm" onclick="editParam('${r._param}')">修改</button>
+           <button class="btn btn-danger btn-sm" onclick="delParam('${r._param}')">删除</button></span>`
+        : `<button class="btn btn-danger btn-sm" onclick="delRule('requirement',${userIdx})">删除</button>`}</div>`;
+  }).join('') : '<div style="color:var(--muted);font-size:13px;">暂无分析要求（可在上方对话添加，或在规则总览下方编辑参数约定）</div>';
   // 生成要求
   const gens = rules.generation_requirements||[];
   $('genReqList').innerHTML = gens.length ? gens.map((r,ri)=>`
@@ -119,26 +122,48 @@ async function load(){
       <div>${esc(r.description)}</div></span></label>
       <button class="btn btn-danger btn-sm" onclick="delRule('generation_requirement',${ri})">删除</button></div>`).join('')
     : '<div style="color:var(--muted);font-size:13px;">暂无生成要求</div>';
-  // 规则参数（FormKit 动态表单：分组折叠 + 搜索 + 自动控件）
+  // 规则总览
   renderAll();
-  loadKit();
 }
-async function loadKit(){
-  try{
-    const d = await (await fetch('/api/config-schema')).json();
-    window._kitSchema = d.schema.rules;
-    window._kitValue = JSON.parse(JSON.stringify(d.rules));
-    window._kitOpts = {
-      onSave: async ()=>{
-        const res = await fetch('/api/rules',{method:'POST',headers:{'Content-Type':'application/json'},
-          body:JSON.stringify(window._kitValue)});
-        const dr = await res.json();
-        if(!res.ok){ alert('保存失败: '+(dr.detail||JSON.stringify(dr))); return; }
-        alert('已保存并写入历史'); load();
-      }
-    };
-    kitInit('rulesList', window._kitSchema, window._kitValue, window._kitOpts);
-  }catch(e){ document.getElementById('rulesList').innerHTML='<div style="color:var(--muted);font-size:13px;">加载规则参数失败: '+kitEsc(String(e))+'</div>'; }
+// —— 参数约定 → 分析要求条目（引擎参数转条目，随分析要求注入分析 AI；可修改/删除） ——
+function paramReqEntries(rules){
+  const out = [];
+  if(rules.delay_days_danger) out.push({title:'超期高风险阈值', description:`任务超期超过 ${rules.delay_days_danger} 天 → 标记为高风险`, _param:'delay_days_danger'});
+  if(rules.risk_near_end_days) out.push({title:'临近完成预警阈值', description:`计划结束前 ${rules.risk_near_end_days} 天仍未完成 → 标记为关注`, _param:'risk_near_end_days'});
+  if(rules.slow_progress_pct) out.push({title:'进度偏慢阈值', description:`实际进度落后时间计划超过 ${rules.slow_progress_pct} 个百分点 → 标记为关注/偏慢`, _param:'slow_progress_pct'});
+  const ig = rules.ignore_keywords||[];
+  if(ig.length) out.push({title:'忽略词', description:'以下内容不作为条目（忽略）：'+ig.join('、'), _param:'ignore_keywords'});
+  const sw = rules.status_words||{};
+  const swk = Object.keys(sw);
+  if(swk.length) out.push({title:'状态词归一化', description:'状态词归一化：'+swk.map(k=>`「${k}」→「${sw[k]}」`).join('、'), _param:'status_words'});
+  const ca = rules.column_aliases||{};
+  const cak = Object.keys(ca);
+  if(cak.length) out.push({title:'表头列名映射', description:'表头列名映射：'+cak.map(k=>`「${k}」→「${ca[k]}」`).join('、'), _param:'column_aliases'});
+  return out;
+}
+function paramKeyLabel(k){
+  return {delay_days_danger:'delay_days_danger（超期天数）', risk_near_end_days:'risk_near_end_days（预警天数）',
+          slow_progress_pct:'slow_progress_pct（偏慢阈值%）', ignore_keywords:'ignore_keywords',
+          status_words:'status_words', column_aliases:'column_aliases'}[k]||k;
+}
+async function editParam(key){
+  const cur = rules[key];
+  const label = meta[key]?.label || key;
+  let v = null;
+  if(key==='ignore_keywords') v = prompt(`修改忽略词（每行一个，逗号/顿号分隔；当前：${(cur||[]).join('、')}）：`, (cur||[]).join('、'));
+  else if(key==='status_words' || key==='column_aliases'){
+    const fmt = (cur||{}); const curTxt = Object.keys(fmt).map(k=>k+'='+fmt[k]).join('，');
+    v = prompt(`修改「${label}」（每项 源=目标，逗号分隔；当前：${curTxt}）：`, curTxt);
+  }
+  else v = prompt(`修改「${label}」（当前：${cur}）：`, cur);
+  if(v===null) return;
+  saveRulesPatch({[key]: v});
+}
+async function delParam(key){
+  if(!confirm(`删除参数约定「${meta[key]?.label||key}」？（该处理指令将不再注入分析 AI）`)) return;
+  const zero = {delay_days_danger:0, risk_near_end_days:0, slow_progress_pct:0,
+                ignore_keywords:[], status_words:{}, column_aliases:{}};
+  saveRulesPatch({[key]: zero[key]!==undefined ? zero[key] : null});
 }
 function renderAll(){
   const box = document.getElementById('overviewList'); if(!box) return;
@@ -178,17 +203,31 @@ async function batchDel(kind){
   if(!res.ok){ alert(d.detail||'失败'); return; }
   alert(d.note||'已删除'); reqSel={}; genSel={}; load();
 }
-function editRule(key){
-  const cur = rules[key];
-  const v = prompt(`修改「${meta[key]?.label||key}」（当前：${cur}）：`, cur);
-  if(v===null) return;
-  const num = Number(v);
-  if(isNaN(num)){ alert('请输入有效数值'); return; }
-  saveRulesPatch({[key]: num});
-}
 async function saveRulesPatch(patch){
+  // 把编辑框的字符串转成对应类型：数值→number、忽略词→数组、映射→对象
+  const clean = {};
+  for(const [k,v] of Object.entries(patch)){
+    if(k==='ignore_keywords'){
+      clean[k] = Array.isArray(v) ? v : String(v||'').split(/[,，、\n]/).map(s=>s.trim()).filter(Boolean);
+    } else if(k==='status_words' || k==='column_aliases'){
+      if(Array.isArray(v) || (v && typeof v==='object' && !Array.isArray(v))){ clean[k]=v; continue; }
+      const o = {};
+      String(v||'').split(/[,，\n]/).forEach(part=>{
+        const i = part.indexOf('=');
+        if(i>0) o[part.slice(0,i).trim()] = part.slice(i+1).trim();
+      });
+      clean[k] = o;
+    } else if(typeof v==='string' && v.trim()!=='' && !isNaN(Number(v))){
+      clean[k] = Number(v);
+    } else if(typeof v==='string' && v.trim()===''){
+      // 数值字段清空 → 0（等同删除该参数约定）；其余 → null
+      clean[k] = ['delay_days_danger','risk_near_end_days','slow_progress_pct'].includes(k) ? 0 : null;
+    } else {
+      clean[k] = v;
+    }
+  }
   const res = await fetch('/api/rules',{method:'POST',headers:{'Content-Type':'application/json'},
-    body:JSON.stringify({...rules, ...patch})});
+    body:JSON.stringify({...rules, ...clean})});
   const d = await res.json();
   if(!res.ok){ alert('保存失败: '+(d.detail||JSON.stringify(d))); return; }
   alert('已保存并写入历史'); load();

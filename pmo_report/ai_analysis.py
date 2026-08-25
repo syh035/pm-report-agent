@@ -15,8 +15,8 @@ import re
 from typing import Dict, List, Optional
 
 
-def build_processing_rules(rules: Dict) -> str:
-    """把规则库的引擎参数转换为分析 AI 的「处理约定」指令。
+def build_processing_rules(rules: Dict) -> List[str]:
+    """把规则库的引擎参数转换为分析 AI 的「处理约定」条目（并入【分析要求】）。
     主体是 AI：AI 分析数据时按这些约定输出（风险等级/忽略/归一化），不是规则引擎执行。"""
     lines = []
     if rules.get("delay_days_danger"):
@@ -33,9 +33,7 @@ def build_processing_rules(rules: Dict) -> str:
     ca = rules.get("column_aliases") or {}
     if ca:
         lines.append("- 表头列名映射：" + "、".join(f"「{k}」→「{v}」" for k, v in ca.items()))
-    if lines:
-        return "【处理约定】（遇到这些情况时按此处理）\n" + "\n".join(lines)
-    return "（无特殊处理约定）"
+    return lines
 
 
 def ai_assist_analysis(source_id: str, stored_path: str, ext: str,
@@ -63,17 +61,20 @@ def ai_assist_analysis(source_id: str, stored_path: str, ext: str,
         return {"sections": [], "added": 0, "note": "文档转换失败，跳过 AI 分析"}
 
     try:
-        # 2) 处理约定（引擎参数转指令）+ 分析要求（requirements）作为 AI 筛选准则
+        # 2) 分析要求（requirements）+ 参数约定（引擎参数转指令）合并为一份【分析要求】
         rules = rules_module.load_rules()
         reqs = rules.get("requirements") or []
-        reqs_text = "\n".join(f"- {r.get('title')}: {r.get('description')}" for r in reqs) or "（无额外要求）"
-        proc_text = build_processing_rules(rules)
+        reqs_text = "\n".join(f"- {r.get('title')}: {r.get('description')}" for r in reqs) or ""
+        proc_lines = build_processing_rules(rules)
+        if proc_lines:
+            reqs_text = (reqs_text + "\n" if reqs_text else "") + "\n".join(proc_lines)
+        if not reqs_text.strip():
+            reqs_text = "（无额外要求）"
 
         # 3) 调用分析 AI 抽取结构化数据（主体是 AI，按处理约定输出含风险等级/忽略/归一化）
         entry = prompts_module.get_prompt("ai_analysis")
         prompt = prompts_module.render_user(entry, {
             "requirements": reqs_text,
-            "processing_rules": proc_text,
             "document_text": md_text[:20000],
         })
         out = ai_module.call_with_cache(
