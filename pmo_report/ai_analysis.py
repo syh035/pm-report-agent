@@ -17,7 +17,7 @@ from typing import Dict, List, Optional
 
 def build_processing_rules(rules: Dict) -> List[str]:
     """把规则库的引擎参数转换为分析 AI 的「处理约定」条目（并入【分析要求】）。
-    主体是 AI：AI 分析数据时按这些约定输出（风险等级/忽略/归一化），不是规则引擎执行。"""
+    主体是 AI：AI 分析数据时按这些约定输出（风险等级/忽略/归一化/性质标记），不是规则引擎执行。"""
     lines = []
     if rules.get("delay_days_danger"):
         lines.append(f"- 任务超期超过 {rules['delay_days_danger']} 天 → 标记为高风险")
@@ -33,12 +33,28 @@ def build_processing_rules(rules: Dict) -> List[str]:
     ca = rules.get("column_aliases") or {}
     if ca:
         lines.append("- 表头列名映射：" + "、".join(f"「{k}」→「{v}」" for k, v in ca.items()))
-    # 统一重点关注标记：命中任一约定的条目必须带 focus 字段，供数据面板/看板统计
-    if any(lines):
-        lines.append(
-            "- 输出约定：凡命中以上任一约定的条目，fields 中必须输出 \"focus\": \"是\"，"
-            "并用 \"focus_reason\" 一句话说明原因；未命中任何约定的条目输出 \"focus\": \"否\"（focus_reason 可留空）"
-        )
+    # 注：性质标记（marks）由 build_mark_convention 基于「分析要求」条目生成，不再注入固定 focus
+    return lines
+
+
+def build_mark_convention(requirements: List[Dict]) -> List[str]:
+    """把「分析要求」条目转换为 AI 的性质标记约定（marks）。
+    每条要求的 title 即性质标签名，description 即判断条件；AI 判断条目是否命中并输出 marks/mark_reasons。
+    主体是 AI：性质由用户定义（增删=增删一条要求），AI 按条件判断，不是规则引擎执行。"""
+    lines = []
+    reqs = [r for r in (requirements or []) if str(r.get("title") or "").strip()]
+    if not reqs:
+        return lines
+    lines.append("【性质标记】以下性质由你按条件判断并标记（title 即标签名，description 即判断条件）：")
+    for r in reqs:
+        t = str(r.get("title") or "").strip()
+        d = str(r.get("description") or "").strip()
+        lines.append(f"- 「{t}」：{d or '（无条件说明，按常识判断）'}")
+    lines.append(
+        "- 输出约定：对每个条目，逐条判断是否命中上述性质；命中者在 fields 中输出 "
+        "\"marks\": [命中的性质标签数组]，并用 \"mark_reasons\": {\"标签\": \"一句话原因\"} 说明；"
+        "未命中任何性质的条目输出 \"marks\": []。"
+    )
     return lines
 
 
@@ -67,17 +83,20 @@ def ai_assist_analysis(source_id: str, stored_path: str, ext: str,
         return {"sections": [], "added": 0, "note": "文档转换失败，跳过 AI 分析"}
 
     try:
-        # 2) 分析要求（requirements）+ 参数约定（引擎参数转指令）合并为一份【分析要求】
+        # 2) 分析要求（requirements）+ 参数约定（引擎参数转指令）+ 性质标记约定 合并为一份【分析要求】
         rules = rules_module.load_rules()
         reqs = rules.get("requirements") or []
         reqs_text = "\n".join(f"- {r.get('title')}: {r.get('description')}" for r in reqs) or ""
         proc_lines = build_processing_rules(rules)
+        mark_lines = build_mark_convention(reqs)
         if proc_lines:
             reqs_text = (reqs_text + "\n" if reqs_text else "") + "\n".join(proc_lines)
+        if mark_lines:
+            reqs_text = (reqs_text + "\n" if reqs_text else "") + "\n".join(mark_lines)
         if not reqs_text.strip():
             reqs_text = "（无额外要求）"
 
-        # 3) 调用分析 AI 抽取结构化数据（主体是 AI，按处理约定输出含风险等级/忽略/归一化）
+        # 3) 调用分析 AI 抽取结构化数据（主体是 AI，按处理约定输出含风险等级/忽略/归一化/性质标记）
         entry = prompts_module.get_prompt("ai_analysis")
         prompt = prompts_module.render_user(entry, {
             "requirements": reqs_text,

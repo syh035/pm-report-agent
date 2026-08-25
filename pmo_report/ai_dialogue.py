@@ -42,6 +42,16 @@ PURPOSE_FINALIZE_HINT: Dict[str, str] = {
         '"title":"中文短标题","description":"忠实概括","value":数值或null,"key":字段名或null}。'
         "仅包含用户确认的规则；未确认的不要加入。只输出 JSON 数组。"
     ),
+    "dashboard_custom": (
+        "把对话中用户确认的看板定制要求整理为一个 JSON 对象（只输出该 JSON，不要其他文字）：\n"
+        '{"kpi_order":["条目总数",...],"kpi_hidden":["..."],"kpi_color":{"条目总数":"#4A6CF7"},'
+        '"zone_order":["重点关注",...],"zone_hidden":["..."],"zone_title":{"重点关注":"★ 重点关注"},'
+        '"zone_note":{"重点关注":"按分析约定命中"},'
+        '"kind_order":["risk","task",...],"kind_hidden":["metric",...]}\n'
+        "字段说明：kpi_order/kpi_hidden 控制 KPI 卡的顺序与隐藏；zone_* 控制置顶性质专区的顺序/隐藏/标题/副文案；"
+        "kind_order/kind_hidden 控制分类区块（risk/task/metric/milestone/decision/issue/raw）的顺序与隐藏。"
+        "只包含用户明确要求的改动；用户没提的保持原样（对应字段省略或为空数组）。"
+    ),
 }
 
 
