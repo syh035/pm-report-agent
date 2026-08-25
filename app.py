@@ -643,44 +643,37 @@ def batch_delete_sources(payload: SourceBatchDeleteIn):
 
 @app.post("/api/sources/undo")
 def undo_source_op():
-    """撤销最近一次原始库操作（删除→恢复）。"""
+    """撤销最近一次原始库操作（删除→恢复源文件 + AI 重新分析）。"""
     from pmo_report import datastore
     r = datastore.restore_source()
     if not r:
         raise HTTPException(400, "没有可撤销的操作")
     if not r.get("ok"):
         raise HTTPException(400, r.get("reason", "撤销失败"))
-    # 撤销删除恢复 sheet 需要重新解析源文件 → 重新加载工作区
+    # 撤销后重新跑 AI 分析（主体是 AI；无 Key 则只保留原文）
     try:
         sid = r.get("source_id", "")
         src = datastore.get_source(sid)
         if src and os.path.exists(src.get("stored_path", "")):
-            tmp = src["stored_path"]
+            from pmo_report import prompts as _pp
+            from pmo_report.ai_analysis import ai_assist_analysis
             ext = os.path.splitext(src["filename"] or "")[1].lower()
+            ds = None
             if ext in (".xlsx", ".xlsm"):
-                from pmo_report.parsers import tabular_parser
-                sheet_projects = tabular_parser.parse_excel_all(tmp)
-            else:
-                sheet_projects = [(os.path.splitext(src["filename"] or "")[0], parse_file(tmp, period=""))]
-            from pmo_report.dataset import parse_dataset_sheets
+                try:
+                    from pmo_report.dataset import parse_dataset_sheets
+                    ds = parse_dataset_sheets(src["stored_path"])
+                    datastore.save_dataset_sections(sid, ds)
+                except Exception:
+                    ds = None
             try:
-                ds = parse_dataset_sheets(tmp)
-                datastore.save_dataset_sections(sid, ds)
+                ai_assist_analysis(sid, src["stored_path"], ext, ai_mod, _pp, rules_mod,
+                                   existing_items=[], dataset_sections=ds)
             except Exception:
-                ds = None
-            for name, proj in sheet_projects:
-                nk = _next_sid()
-                stats = analyze(proj, rules=load_rules())
-                WORKSPACE["sheets"][nk] = {
-                    "name": proj.name or name, "source": src.get("filename", ""),
-                    "source_id": sid, "project": proj, "_stats": stats.to_dict(),
-                    "parse_stats": proj.parse_stats, "rule_tasks": proj.rule_snapshot,
-                    "sheet_type": "dataset" if ds else "task",
-                }
-            _persist_workspace()
+                pass
     except Exception:
         pass
-    return {"ok": True, "note": f"已撤销删除，恢复「{r.get('filename')}」", "filename": r.get("filename")}
+    return {"ok": True, "note": f"已撤销删除，恢复「{r.get('filename')}」（并重新 AI 分析）", "filename": r.get("filename")}
 
 
 @app.get("/api/sources/{sid}/download")
@@ -1993,7 +1986,7 @@ def template_tune(payload: TemplateTuneIn):
 # ================= 周报生成 =================
 @app.post("/api/generate")
 async def generate(
-    sheet_ids: str = Form(""),        # 逗号分隔；空则用所有 sheet 或上传文件
+    sheet_ids: str = Form(""),        # 逗号分隔；空则用所有 sheet 或上传文件（已弃用，请用 /api/generate/one）
     project_name: str = Form(""),
     period: str = Form(""),
     use_ai: bool = Form(True),
