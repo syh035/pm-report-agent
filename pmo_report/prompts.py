@@ -80,40 +80,17 @@ LEGACY_PROMPT_MAP: Dict[str, tuple] = {
         "3. 数据集中有、但模板没提到的重要数据（如新增风险/里程碑）可补充到对应章节；\n"
         "4. 所有数字/日期/人名必须来自【数据集】，禁止编造；必须遵守【生成要求】；\n"
         "5. 输出完整 HTML（沿用模板原有结构与样式，h1/h2/p/table/ul/li），不用 markdown 符号。"),
-    "ai_pipeline_present": ("ai_generation", "week_report",
-        "请生成一份{report_type}：严格按【模板】章节结构；内容用【分析结论】要点+【结构化数据】真实值；"
-        "必须遵守【生成要求】；输出完整 HTML，不用 markdown 符号。"),
     "template_parse": ("ai_generation", "template_parse",
         "把下面的模板原文转换成结构化 HTML 周报模板：使用标准 HTML 标签；"
         "保留占位符（{project_name}/{period}/{today} 等）原样；大致保留原文章节标题和顺序；只输出 HTML 本身。"),
-    "template_tune": ("ai_generation", "template_tune",
-        "基于当前模板按用户的调整要求重写：保留模板整体结构与占位符；只修改用户要求的部分；"
-        "用户没要求改的部分保持不变；只输出修改后的完整 HTML 模板。"),
     "ai_analysis": ("ai_analysis", "structure",
         "请按【分析要求】从文档中抽取结构化数据，输出 JSON："
         "{\"sections\":[{\"kind\":\"task|risk|issue|decision|milestone|metric\","
         "\"name\":\"条目名\",\"fields\":{...},\"source_note\":\"来源\"}],\"summary\":\"一句话概览\"}。"
         "每板块最多6条，总量60条以内，保证JSON完整闭合。"),
-    "ai_pipeline_filter": ("ai_analysis", "structure",
-        "从文档 markdown 中抽取结构化数据，输出 JSON sections 数组（kind/name/fields/source_note）+ summary；"
-        "每板块最多6条，总量60条以内。"),
-    "ai_pipeline_analyze": ("ai_analysis", "analyze",
-        "基于结构化数据按【工作要求】分析，输出 3-6 句纯文本（结论先行）：进度是否受控、主要风险与影响、"
-        "需管理层关注事项、下一步建议。严格约束：所有数字/日期必须能在数据中找到。"),
-    "ai_review": ("ai_analysis", "review",
-        "以下是规则解析出的任务 JSON，请逐条校验修正明显错误：owner/progress/status/plan_end 字段；"
-        "只修正数据内部不一致或明显笔误；不确定的保持原值；不要删减任务、不要编造；只输出修正后的 JSON 数组。"),
     "enrich_tasks": ("ai_analysis", "refine",
         "从候选行中提炼任务/进度条目，输出 JSON 数组，每项含 name/owner/progress/status/plan_end/note；"
         "不确定的字段输出 null，不要猜；只输出 JSON 数组。"),
-    "rule_intent": ("ai_rules", "single",
-        "用户想添加一条规则或工作要求，输出 JSON：{\"type\":\"rule|requirement|generation_requirement|status_map|column_map|ignore|other\","
-        "\"title\":\"中文短标题\",\"description\":\"忠实概括\",\"key\":字段名或null,\"value\":数值或null,\"scope\":\"\",\"applies_to\":\"\"}。"
-        "涉及如何筛选/抽取/归类数据→requirement（分析要求）；涉及周报怎么写/格式/排序/口径→generation_requirement（生成要求）。"
-        "只输出 JSON 对象。"),
-    "rule_batch_intent": ("ai_rules", "batch",
-        "从规则文档中批量提取规则为 JSON 数组，每项含 type/title/description/value/key；"
-        "判断依据同单条；数值阈值 key 尽量填 delay_days_danger/slow_progress_pct/risk_near_end_days。\n{force_hint}"),
     "dialogue_finalize": ("ai_rules", "finalize_dialogue",
         "根据完整对话记录按【总结要求】整理最终结果，只提取用户明确确认的内容，不要编造；只输出要求的格式（JSON 或 HTML）。"),
 }

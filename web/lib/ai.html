@@ -35,7 +35,7 @@
 </head>
 <body>
 <div class="sub" style="display:flex;justify-content:space-between;align-items:center;">
-  <div><h1>⚙️ AI 配置库</h1><div>API Key / 模型 / 接口地址 / Token 用量（仅本地 config/，gitignored）</div></div>
+  <div><h1>⚙️ AI 配置库</h1><div>API Key / 模型 / 接口地址（仅本地 config/，gitignored）</div></div>
   <a class="back" href="/libraries.html">← 返回数据库中心</a>
 </div>
 
@@ -57,18 +57,6 @@
 <div class="card">
   <h3>模型与接口（FormKit 动态表单）</h3>
   <div id="aiKitBox"></div>
-</div>
-
-<div class="card">
-  <h3>🔢 Token 用量</h3>
-  <div class="kpis" id="tokenKpis"></div>
-  <div class="row" style="margin-bottom:10px;">
-    <button class="btn btn-outline" onclick="loadTokenUsage()">刷新</button>
-    <button class="btn btn-danger" onclick="clearTokenUsage()">清空统计</button>
-    <span class="msg" id="tokenMsg"></span>
-  </div>
-  <table><thead><tr><th>时间</th><th>用途</th><th>输入</th><th>输出</th><th>缓存</th></tr></thead>
-    <tbody id="tokenEntries"></tbody></table>
 </div>
 
 <script src="/lib/formkit.js"></script>
@@ -127,25 +115,7 @@ async function loadAiConfig(){
     kitInit('aiKitBox', window._kitSchema, window._kitValue, window._kitOpts);
   }catch(e){ document.getElementById('aiKitBox').innerHTML='<div style="color:var(--muted);font-size:12px;">加载失败: '+kitEsc(String(e))+'</div>'; }
 }
-const SITE_LABELS = {report:'周报综述', enrich:'文本提炼', template:'模板解析', ai:'其它'};
-async function loadTokenUsage(){
-  const d = await (await fetch('/api/settings/tokens')).json();
-  const cost = (d.total_in/1e6*1 + d.total_out/1e6*2).toFixed(4);
-  $('tokenKpis').innerHTML = [
-    ['调用次数', d.calls], ['输入 tokens', d.total_in], ['输出 tokens', d.total_out],
-    ['缓存命中', d.cache_hits], ['估算费用', '¥'+cost],
-  ].map(k=>`<div class="kpi"><b>${k[1]}</b><span>${k[0]}</span></div>`).join('');
-  $('tokenEntries').innerHTML = d.entries && d.entries.length ? d.entries.map(e=>
-    `<tr><td>${esc(e.ts||'')}</td><td>${esc(SITE_LABELS[e.site]||e.site||'')}</td><td>${e.cached?'0':e.tokens_in||0}</td><td>${e.cached?'0':e.tokens_out||0}</td><td>${e.cached?'✅':'—'}</td></tr>`).join('')
-    : '<tr><td colspan="5" style="color:var(--muted);padding:12px;">暂无记录（AI 未调用过，或尚未配置 Key）</td></tr>';
-}
-async function clearTokenUsage(){
-  if(!confirm('确定清空 Token 用量统计？')) return;
-  await fetch('/api/settings/tokens/clear',{method:'POST'});
-  $('tokenMsg').textContent='已清空';
-  loadTokenUsage();
-}
-loadKeyStatus(); loadAiConfig(); loadTokenUsage();
+loadKeyStatus(); loadAiConfig();
 </script>
 </body>
 </html>

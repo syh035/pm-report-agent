@@ -5,22 +5,23 @@ PM Report Agent — FastAPI Web 操作面板后端。
 启动： python -m uvicorn app:app --reload
 访问： http://127.0.0.1:8000
 
-API：
-  数据/工作区：
-    POST /api/workspace/load                上传文件->生成 sheet
-    GET  /api/workspace                     获取完整工作区（含分组汇总）
-    POST /api/workspace/sheet/{sid}/delete  删除 sheet
-    POST /api/workspace/sheet/{sid}/rename  重命名 sheet
-    POST /api/workspace/groups              新建分组
-    POST /api/workspace/groups/{gid}/sheet  把 sheet 移入分组
-    POST /api/workspace/groups/{gid}/delete 删除分组
+API（主要）：
+  数据：
+    POST /api/workspace/load                上传文件 -> 归档 + AI 分析
+    GET  /api/sources                       源文件列表
+    GET  /api/sources/{sid}                 源文件详情（AI 提取条目）
+    DELETE /api/sources/{sid}               删除源文件（留痕可撤销）
+    GET  /api/source-groups                 源文件分组
+  看板：
+    GET /api/dashboard                      看板（只展示 AI 提取条目）
   规则：
-    GET/POST /api/rules, POST /api/rules/reset, GET /api/rules/history
+    GET/POST /api/rules
+    POST /api/rules/delete | batch-delete | converse/confirm | template-extract
   模板：
-    GET/POST /api/template, POST /api/template/reset, POST /api/template/parse
-  周报：
-    POST /api/generate
-    POST /api/export   导出（word/text）
+    GET/POST /api/template, POST /api/template/parse, GET/POST /api/template/lib
+  生成：
+    POST /api/generate/one                  一条线生成（模板原地更新）
+    POST /api/export                        导出（word/text）
   历史：
     GET /api/history, GET /api/history/{name}, POST /api/save_report
 """
@@ -101,121 +102,15 @@ def _compact_stats(stats_dict: Dict) -> Dict:
     if tp:
         out["tasks_progress"] = tp
     return out
-
-
-def _latest_prev_stats(name: str = "") -> Optional[Dict]:
-    """取最近一期统计作为环比基准。
-    只与同名项目对比（避免拿别的项目的上一期来比，环比数字才可信）；无同名记录返回 None。"""
-    if not name:
-        return None
-    h = _load_stats_history()
-    for e in h:
-        if e.get("project") == name:
-            return e.get("stats")
-    return None
+# ================= 工作区状态 =================
+# sheets: {sid: {"name", "source", "project": {...}}}
+# groups: {gid: {"name", "sheets": [sid,...]}}
 
 ALLOWED_EXTS = {".xlsx", ".xlsm", ".csv", ".docx", ".pdf", ".txt", ".md", ".html", ".htm"}
 
 app = FastAPI(title="PM Report Agent", version="0.11.0")
 
-
-# ================= 工作区状态 =================
-# sheets: {sid: {"name", "source", "project": {...}}}
-# groups: {gid: {"name", "sheets": [sid,...]}}
 WORKSPACE: Dict = {"sheets": {}, "groups": {}, "package_id": str(uuid.uuid4())[:8]}
-
-
-def _persist_workspace() -> None:
-    """把当前工作区（分组 + sheet 元数据）落盘，重启自动恢复。"""
-    try:
-        from pmo_report import datastore
-        datastore.save_workspace(WORKSPACE["sheets"], WORKSPACE["groups"])
-    except Exception:
-        pass
-
-
-def _restore_workspace() -> None:
-    """启动时恢复上次的工作区（分组 + sheet 元数据）。"""
-    try:
-        from pmo_report import datastore
-        st = datastore.load_workspace()
-        if not st:
-            return
-        # 只恢复分组结构与 sheet 元数据；project 对象在 _workspace_view 需要时再解析？
-        # —— 直接整体恢复：project 已由 from_dict 还原，stats 需要重算
-        for sid, meta in (st.get("sheets") or {}).items():
-            proj = meta.get("project")
-            if proj is None:
-                continue
-            try:
-                stats = analyze(proj, rules=load_rules())
-            except Exception:
-                stats = None
-            WORKSPACE["sheets"][sid] = {
-                "name": meta.get("name") or proj.name,
-                "source": meta.get("source", ""),
-                "source_id": meta.get("source_id", ""),
-                "project": proj,
-                "_stats": stats.to_dict() if stats else {},
-                "parse_stats": meta.get("parse_stats") or {},
-                "rule_tasks": meta.get("rule_tasks") or [],
-            }
-        WORKSPACE["groups"] = dict(st.get("groups") or {})
-    except Exception:
-        pass
-
-
-_restore_workspace()
-
-
-def _next_sid():
-    return "S" + str(len(WORKSPACE["sheets"]) + 1)
-
-
-def _summarize_sheet(sheets: list) -> Dict:
-    """把一组 sheet 合并为分组汇总。
-    与全工作区汇总同口径：任务去重（名称+负责人）、完成率/进度按任务数或权重计算，
-    并重新计算 风险/关键路径/健康体检（而非简单累加）。"""
-    all_tasks: List[Task] = []
-    seen_keys = set()
-    for sh in sheets:
-        for t in (sh.get("project") or {}).tasks:
-            key = (t.name, t.owner)
-            if key not in seen_keys:
-                seen_keys.add(key)
-                all_tasks.append(t)
-    all_tasks = _dedupe_tasks(all_tasks)
-    merged_proj = Project(name="分组汇总", tasks=all_tasks)
-    stats = analyze(merged_proj, rules=load_rules())
-    return stats.to_dict()
-
-
-def _workspace_view() -> Dict:
-    """返回前端可用的工作区结构 + 各分组汇总。"""
-    sheets_view = {}
-    for sid, sh in WORKSPACE["sheets"].items():
-        sheets_view[sid] = {
-            "id": sid,
-            "name": sh["name"],
-            "source": sh["source"],
-            "source_id": sh.get("source_id", ""),
-            "stats": sh["_stats"],
-            "tasks_full": [t.to_dict() for t in sh["project"].tasks],  # 供任务校对编辑
-            "parse_stats": sh.get("parse_stats") or {},                # 解析质量度量
-            "rule_tasks": sh.get("rule_tasks") or [],                  # AI 提炼前的规则快照（diff 视图）
-        }
-    groups_view = {}
-    for gid, g in WORKSPACE["groups"].items():
-        member_sheets = [WORKSPACE["sheets"][sid] for sid in g["sheets"] if sid in WORKSPACE["sheets"]]
-        groups_view[gid] = {
-            "id": gid,
-            "name": g["name"],
-            "sheets": g["sheets"],
-            "summary": _summarize_sheet(member_sheets) if member_sheets else None,
-        }
-    return {"sheets": sheets_view, "groups": groups_view}
-
-
 # ================= 数据模型 =================
 class RulesIn(BaseModel):
     delay_days_danger: int
@@ -234,25 +129,6 @@ class RulesIn(BaseModel):
     generation_requirements: Optional[List[Dict]] = None
 
 
-class RenameIn(BaseModel):
-    name: str
-
-
-class GroupIn(BaseModel):
-    name: str
-
-
-class GroupSheetIn(BaseModel):
-    sheet_id: str
-
-
-class BatchIn(BaseModel):
-    """批量操作：action ∈ move | ungroup | delete；move 时 gid 为目标分组。"""
-    action: str
-    sheet_ids: List[str] = []
-    gid: Optional[str] = None
-
-
 class TemplateIn(BaseModel):
     content: str = ""
     format: Optional[str] = "html"   # html | blocks
@@ -265,14 +141,6 @@ class SaveReportIn(BaseModel):
     stats: Optional[Dict] = None   # 统计汇总（写入环比历史）
     report_type: Optional[str] = ""   # day=日报 / week=周报 / other
     period: Optional[str] = ""        # 统计周期/日期（文稿库归档用）
-
-
-class TaskUpdateIn(BaseModel):
-    tasks: List[Dict]              # 校对后的完整任务列表
-
-
-class ExportTasksIn(BaseModel):
-    sheet_ids: str = ""            # 逗号分隔；空则导出全部
 
 
 class ExporterIn(BaseModel):
@@ -323,11 +191,6 @@ def _save_upload_to_tmp(uf: UploadFile) -> str:
 
 
 # ================= 工作区 =================
-@app.get("/api/workspace")
-def workspace_view():
-    return _workspace_view()
-
-
 @app.post("/api/workspace/load")
 async def workspace_load(files: List[UploadFile] = File(...),
                          overwrite: str = Form("false"),
@@ -398,114 +261,8 @@ async def workspace_load(files: List[UploadFile] = File(...),
         log_note = f"上传 {fname}" + (f"；{ai_note}" if ai_note else "（未配置 AI Key，仅存原文）")
         from pmo_report import datastore as _ds2
         _ds2.log_source_op("add", source_id, fname, {"note": log_note})
-    _persist_workspace()
     return {"ok": True, "created": created, "renamed": renamed,
-            "is_dataset": is_dataset, "workspace": _workspace_view()}
-
-
-@app.post("/api/workspace/sheet/{sid}/delete")
-def workspace_sheet_delete(sid: str):
-    if sid not in WORKSPACE["sheets"]:
-        raise HTTPException(404, "sheet 不存在")
-    del WORKSPACE["sheets"][sid]
-    for g in WORKSPACE["groups"].values():
-        if sid in g["sheets"]:
-            g["sheets"].remove(sid)
-    _persist_workspace()
-    return {"ok": True, "workspace": _workspace_view()}
-
-
-@app.post("/api/workspace/sheet/{sid}/rename")
-def workspace_sheet_rename(sid: str, payload: RenameIn):
-    if sid not in WORKSPACE["sheets"]:
-        raise HTTPException(404, "sheet 不存在")
-    WORKSPACE["sheets"][sid]["name"] = payload.name.strip() or WORKSPACE["sheets"][sid]["name"]
-    _persist_workspace()
-    return {"ok": True, "workspace": _workspace_view()}
-
-
-@app.post("/api/workspace/groups")
-def workspace_group_create(payload: GroupIn):
-    gid = "G" + str(len(WORKSPACE["groups"]) + 1)
-    WORKSPACE["groups"][gid] = {"name": payload.name or "新分组", "sheets": []}
-    _persist_workspace()
-    return {"ok": True, "workspace": _workspace_view()}
-
-
-@app.post("/api/workspace/groups/{gid}/sheet")
-def workspace_group_add_sheet(gid: str, payload: GroupSheetIn):
-    if gid not in WORKSPACE["groups"]:
-        raise HTTPException(404, "分组不存在")
-    sid = payload.sheet_id
-    if sid in WORKSPACE["groups"][gid]["sheets"]:
-        return {"ok": True, "workspace": _workspace_view()}
-    # 先从其它组移除
-    for g in WORKSPACE["groups"].values():
-        if sid in g["sheets"]:
-            g["sheets"].remove(sid)
-    WORKSPACE["groups"][gid]["sheets"].append(sid)
-    _persist_workspace()
-    return {"ok": True, "workspace": _workspace_view()}
-
-
-@app.post("/api/workspace/groups/{gid}/delete")
-def workspace_group_delete(gid: str):
-    if gid in WORKSPACE["groups"]:
-        del WORKSPACE["groups"][gid]
-    _persist_workspace()
-    return {"ok": True, "workspace": _workspace_view()}
-
-
-@app.post("/api/workspace/sheet/{sid}/ungroup")
-def workspace_sheet_ungroup(sid: str):
-    """把 sheet 移出所有分组（回到未分组区）。"""
-    if sid not in WORKSPACE["sheets"]:
-        raise HTTPException(404, "sheet 不存在")
-    for g in WORKSPACE["groups"].values():
-        if sid in g["sheets"]:
-            g["sheets"].remove(sid)
-    _persist_workspace()
-    return {"ok": True, "workspace": _workspace_view()}
-
-
-@app.post("/api/workspace/batch")
-def workspace_batch(payload: BatchIn):
-    """批量操作：move（移入/移出分组）、ungroup（全部移出）、delete（删除）。
-
-    返回 {ok, done, missing, workspace}。部分失败不整体回滚，缺失的 sheet 计入 missing。
-    """
-    action = (payload.action or "").strip()
-    if action not in {"move", "ungroup", "delete"}:
-        raise HTTPException(400, "action 必须是 move / ungroup / delete")
-    if not payload.sheet_ids:
-        raise HTTPException(400, "sheet_ids 不能为空")
-    if action == "move" and payload.gid not in WORKSPACE["groups"]:
-        raise HTTPException(404, "目标分组不存在")
-    done, missing = [], []
-    for sid in payload.sheet_ids:
-        if sid not in WORKSPACE["sheets"]:
-            missing.append(sid)
-            continue
-        if action == "delete":
-            del WORKSPACE["sheets"][sid]
-            for g in WORKSPACE["groups"].values():
-                if sid in g["sheets"]:
-                    g["sheets"].remove(sid)
-        elif action == "ungroup":
-            for g in WORKSPACE["groups"].values():
-                if sid in g["sheets"]:
-                    g["sheets"].remove(sid)
-        else:  # move
-            if sid in WORKSPACE["groups"][payload.gid]["sheets"]:
-                done.append(sid)
-                continue
-            for g in WORKSPACE["groups"].values():
-                if sid in g["sheets"]:
-                    g["sheets"].remove(sid)
-            WORKSPACE["groups"][payload.gid]["sheets"].append(sid)
-        done.append(sid)
-    _persist_workspace()
-    return {"ok": True, "done": done, "missing": missing, "workspace": _workspace_view()}
+            "is_dataset": is_dataset}
 
 
 # ================= 源数据仓库（原始文件保留 + 行级对照 + 分类数据仓） =================
@@ -615,19 +372,6 @@ def source_detail(sid: str):
             "ai_items": ai_items, "dataset_sections": dataset_sections}
 
 
-@app.get("/api/dataset/{sid}")
-def dataset_detail(sid: str):
-    """数据集板块详情（供前端展示 / AI 抓数预览）。"""
-    from pmo_report import datastore
-    src = datastore.get_source(sid)
-    if not src:
-        raise HTTPException(404, "源数据不存在")
-    sections = datastore.get_dataset_sections(sid)
-    if sections is None:
-        raise HTTPException(404, "该文件没有数据集板块（仅 Excel 多 sheet 数据集支持）")
-    return {"source": src, "sections": sections}
-
-
 # ================= 原始库操作（删除/批量/撤销/留痕） =================
 def _delete_source_full(sid: str) -> Optional[str]:
     """删除源文件（留痕+快照可撤销），清理工作区关联 sheet。返回文件名。"""
@@ -650,7 +394,6 @@ def delete_source_api(sid: str):
     fname = _delete_source_full(sid)
     if not fname:
         raise HTTPException(404, "源数据不存在")
-    _persist_workspace()
     return {"ok": True, "note": f"已删除「{fname}」（留痕可撤销）", "filename": fname}
 
 
@@ -669,7 +412,6 @@ def batch_delete_sources(payload: SourceBatchDeleteIn):
         fname = _delete_source_full(sid)
         if fname:
             removed.append(fname)
-    _persist_workspace()
     return {"ok": True, "removed": removed, "note": f"已批量删除 {len(removed)} 个源文件（留痕可撤销）"}
 
 
@@ -719,13 +461,6 @@ def source_download(sid: str):
                              headers={"Content-Disposition": _content_disposition(src["filename"])})
 
 
-@app.get("/api/items")
-def list_items(kind: str = "", period: str = ""):
-    """分类数据仓查询（kind：task/risk/issue/decision/milestone/metric/raw）。"""
-    from pmo_report import datastore
-    return {"items": datastore.query_items(kind=kind or None, period=period or None)}
-
-
 @app.get("/api/dashboard")
 def get_dashboard():
     """看板：只展示 AI 提取条目（分类仓 items 按 kind/板块分组）。
@@ -754,312 +489,6 @@ def get_dashboard():
         by_src[it.get("source_id", "")] = by_src.get(it.get("source_id", ""), 0) + 1
     return {"kinds": kinds, "items_summary": datastore.items_summary(),
             "by_source": by_src, "has_ai_data": bool(items)}
-
-
-@app.post("/api/workspace/sheet/{sid}/ai-review")
-def ai_review_sheet(sid: str):
-    """AI 深度解析：把规则解析结果交给 AI 校验/修正字段（复杂数据增强理解）。
-    返回修正后的任务 + 原始规则快照（前端 diff 展示，人工确认后保存）。"""
-    from pmo_report import prompts as prompts_mod
-    if sid not in WORKSPACE["sheets"]:
-        raise HTTPException(404, "sheet 不存在")
-    sh = WORKSPACE["sheets"][sid]
-    tasks = sh["project"].tasks
-    if not tasks:
-        raise HTTPException(400, "该 sheet 无任务可校验")
-    payload = [{"name": t.name, "owner": t.owner, "progress": t.progress,
-                "status": t.status, "plan_end": t.plan_end.isoformat() if t.plan_end else None,
-                "note": t.note, "source_line": t.source_line} for t in tasks]
-    entry = prompts_mod.get_prompt("ai_review")
-    prompt = prompts_mod.render_user(entry, {"tasks_json": json.dumps(payload, ensure_ascii=False)})
-    try:
-        out = ai_mod.call_with_cache(
-            "ai_review",
-            [{"role": "system", "content": entry.get("system", "")},
-             {"role": "user", "content": prompt}],
-            temperature=0.2, max_tokens=1500,
-        )
-    except Exception as e:
-        return {"ok": False, "error": str(e)}
-    # 解析 + schema 校验（复用提炼校验口径）
-    import re as _re
-    m = _re.search(r"\[.*\]", out, _re.S)
-    if not m:
-        return {"ok": False, "error": "AI 未返回有效 JSON"}
-    try:
-        data = json.loads(m.group(0))
-    except Exception:
-        return {"ok": False, "error": "AI 返回 JSON 解析失败"}
-    _VALID = {"已完成", "进行中", "未开始", "已滞后", "有风险"}
-    corrected = []
-    for item in data if isinstance(data, list) else []:
-        if not isinstance(item, dict) or not str(item.get("name") or "").strip():
-            continue
-        t = Task(name=str(item.get("name") or "").strip(),
-                 owner=str(item.get("owner") or "").strip(),
-                 status=str(item.get("status") or "").strip() if str(item.get("status") or "").strip() in _VALID else "",
-                 note=str(item.get("note") or "").strip(),
-                 depends_on=str(item.get("depends_on") or "").strip())
-        p = item.get("progress")
-        try:
-            t.progress = None if p in (None, "") else max(0.0, min(float(p), 100.0))
-        except (TypeError, ValueError):
-            t.progress = None
-        pe = item.get("plan_end")
-        if pe:
-            t.plan_end = parse_date(str(pe))
-        corrected.append(t.to_dict())
-    if not corrected:
-        return {"ok": False, "error": "AI 未产出有效任务"}
-    return {"ok": True, "tasks": corrected,
-            "rule_tasks": [t.to_dict() for t in tasks],
-            "note": "AI 深度解析完成，请在编辑页核对（AI改 标注）后保存"}
-
-
-
-
-@app.post("/api/workspace/sheet/{sid}/tasks")
-def update_sheet_tasks(sid: str, payload: TaskUpdateIn):
-    """保存 sheet 的任务校对结果（编辑/增删），并立即重算统计。"""
-    if sid not in WORKSPACE["sheets"]:
-        raise HTTPException(404, "sheet 不存在")
-    proj = WORKSPACE["sheets"][sid]["project"]
-    new_tasks = []
-    for item in payload.tasks or []:
-        t = Task(
-            name=str(item.get("name") or "").strip(),
-            owner=str(item.get("owner") or "").strip(),
-            status=str(item.get("status") or "").strip(),
-            note=str(item.get("note") or "").strip(),
-            depends_on=str(item.get("depends_on") or "").strip(),
-            slow_ok=bool(item.get("slow_ok")),
-            critical=bool(item.get("critical")),
-        )
-        t.plan_start = parse_date(item.get("plan_start"))
-        t.plan_end = parse_date(item.get("plan_end"))
-        t.actual_end = parse_date(item.get("actual_end"))
-        p = item.get("progress")
-        try:
-            t.progress = None if p in (None, "") else float(p)
-        except (TypeError, ValueError):
-            t.progress = None
-        w = item.get("weight")
-        try:
-            t.weight = float(w) if w not in (None, "") else 1.0
-        except (TypeError, ValueError):
-            t.weight = 1.0
-        if t.name:
-            new_tasks.append(t)
-    proj.tasks = new_tasks
-    WORKSPACE["sheets"][sid]["_stats"] = analyze(proj, rules=load_rules()).to_dict()
-    _persist_workspace()
-    return {"ok": True, "n_tasks": len(new_tasks), "workspace": _workspace_view()}
-
-
-def _extract_document_text(path: str) -> str:
-    """从 Word/PDF/HTML/文本 中提取模板原文（供 AI 严格照抄结构）。"""
-    ext = os.path.splitext(path)[1].lower()
-    if ext in (".docx",):
-        from pmo_report.parsers.text_parser import _extract_text_docx
-        return _extract_text_docx(path)
-    if ext in (".pdf",):
-        from pmo_report.parsers.text_parser import _extract_text_pdf
-        return _extract_text_pdf(path, use_ocr=False)
-    if ext in (".html", ".htm"):
-        with open(path, "r", encoding="utf-8", errors="replace") as f:
-            return f.read()
-    with open(path, "r", encoding="utf-8", errors="replace") as f:
-        return f.read()
-
-
-class DatasetReportIn(BaseModel):
-    """模板+数据集生成：source_id 为数据集文件，template_text 可直接传文本。"""
-    source_id: str
-    template_text: str = ""
-
-
-@app.post("/api/dataset/template-extract")
-async def dataset_template_extract(file: UploadFile = File(...)):
-    """上传周报模板文档（Word/PDF/HTML/txt），提取原文文本返回，供 dataset_report 使用。"""
-    tmp = _save_upload_to_tmp(file)
-    try:
-        text = _extract_document_text(tmp)
-    except Exception as e:
-        raise HTTPException(500, f"模板提取失败: {e}")
-    finally:
-        os.path.exists(tmp) and os.remove(tmp)
-    return {"ok": True, "filename": file.filename or "", "text": text[:20000]}
-
-
-@app.post("/api/dataset/report")
-def dataset_report(payload: DatasetReportIn):
-    """核心能力：上传周报模板 + 数据集 → AI 严格按模板结构、从数据集板块抓数生成周报。
-
-    数据一致性：模板中的示例数字是格式示意，AI 必须替换为数据集真实值；
-    生成后返回报告 HTML，并在 detail 中提示数据集里的真实指标供核对。
-    """
-    from pmo_report import datastore
-    from pmo_report.dataset import sections_to_markdown
-    from pmo_report import prompts as prompts_mod
-    src = datastore.get_source(payload.source_id)
-    if not src:
-        raise HTTPException(404, "源数据不存在")
-    sections = datastore.get_dataset_sections(payload.source_id)
-    if not sections:
-        raise HTTPException(400, "该文件没有数据集板块（仅支持多 sheet 数据集 Excel）")
-    template_text = (payload.template_text or "").strip()
-    if not template_text:
-        raise HTTPException(400, "请提供周报模板（文本，或在前端上传模板文档）")
-    dataset_text = sections_to_markdown(sections)
-    gen_reqs = rules_mod.load_rules().get("generation_requirements") or []
-    gen_reqs_text = "\n".join(f"- {r.get('title')}: {r.get('description')}" for r in gen_reqs) or "（无）"
-    entry = prompts_mod.get_prompt("dataset_report")
-    prompt = prompts_mod.render_user(entry, {"template_text": template_text[:8000],
-                                             "dataset_text": dataset_text[:20000],
-                                             "generation_requirements": gen_reqs_text})
-    out = ai_mod.call_with_cache(
-        "dataset_report",
-        [{"role": "system", "content": entry.get("system", "")},
-         {"role": "user", "content": prompt}],
-        temperature=0.3, max_tokens=4000,
-    )
-    out = (out or "").strip()
-    # 去掉可能的代码块包裹（含未闭合的 ```html 前缀）
-    if out.startswith("```"):
-        out = re.sub(r"^```(?:html)?\s*", "", out)
-        out = re.sub(r"```\s*$", "", out)
-    m = re.search(r"```(?:html)?\s*(.*?)```", out, re.S)
-    if m:
-        out = m.group(1).strip()
-    if "<" not in out or ">" not in out:
-        raise HTTPException(502, "AI 未产出有效 HTML 报告")
-    # 提供数据集关键指标供人工核对（AI 生成内容不代写数字正确性）
-    metrics = []
-    for sec in sections:
-        if "指标" in sec.get("section", "") or "kpi" in sec.get("section", "").lower():
-            metrics = sec.get("rows", [])[:12]
-            break
-    return {"ok": True, "html": out, "source": src["filename"],
-            "sections": [s["section"] for s in sections], "metrics": metrics}
-
-
-class AiPipelineIn(BaseModel):
-    """AI 主导主链路输入：上传的源文件 + 可选模板文本 + 报告类型。"""
-    source_id: str
-    template_text: str = ""
-    report_type: str = "week"
-
-
-@app.post("/api/ai-pipeline/run")
-def ai_pipeline_run(payload: AiPipelineIn):
-    """AI 主导主链路：markitdown 转 markdown → AI 筛选 → AI 分析 → AI 呈现。
-    无 API Key 或任一环节失败 → 回退规则引擎（用现有数据集/模板路径生成）。
-    返回 {ok, used_ai, markdown_len, filtered, analysis, html, fallback}。"""
-    from pmo_report import datastore, prompts as prompts_mod
-    from pmo_report.ai_pipeline import doc_to_markdown, ai_filter_data, ai_analyze, ai_present
-    src = datastore.get_source(payload.source_id)
-    if not src or not os.path.exists(src.get("stored_path", "")):
-        raise HTTPException(404, "源数据不存在")
-    # 1) 解析层：markitdown 转 markdown
-    try:
-        md_text = doc_to_markdown(src["stored_path"])
-    except Exception as e:
-        raise HTTPException(500, f"文档转 markdown 失败: {e}")
-    if not md_text.strip():
-        raise HTTPException(400, "文档内容为空（无法转换）")
-    # 2~4) AI 三环节；失败回退规则引擎
-    try:
-        structured = ai_filter_data(md_text, ai_mod, prompts_mod)
-        reqs = rules_mod.load_rules().get("requirements") or []
-        analysis = ai_analyze(structured, reqs, ai_mod, prompts_mod)
-        template = (payload.template_text or "").strip()
-        if not template:
-            try:
-                from pmo_report.report import ReportGenerator
-                template = ReportGenerator.get_template_text()
-            except Exception:
-                template = ""
-        html = ai_present(analysis, structured, template, ai_mod, prompts_mod,
-                          report_type=payload.report_type)
-        if "<" not in html or ">" not in html:
-            raise RuntimeError("AI 未产出有效 HTML")
-        return {"ok": True, "used_ai": True, "markdown_len": len(md_text),
-                "filtered": structured, "analysis": analysis, "html": html, "fallback": False}
-    except Exception as e:
-        # 回退：无 Key / AI 失败 → 用数据集/规则引擎路径
-        try:
-            sections = datastore.get_dataset_sections(payload.source_id)
-            if sections:
-                from pmo_report.dataset import sections_to_markdown
-                ds_text = sections_to_markdown(sections)
-            else:
-                ds_text = md_text
-            template = (payload.template_text or "").strip()
-            if not template:
-                from pmo_report.report import ReportGenerator
-                template = ReportGenerator.get_template_text()
-            gen_reqs2 = rules_mod.load_rules().get("generation_requirements") or []
-            gen_reqs2_text = "\n".join(f"- {r.get('title')}: {r.get('description')}" for r in gen_reqs2) or "（无）"
-            entry = prompts_mod.get_prompt("dataset_report")
-            prompt = prompts_mod.render_user(entry, {"template_text": template[:8000],
-                                                     "dataset_text": ds_text[:20000],
-                                                     "generation_requirements": gen_reqs2_text})
-            out = ai_mod.call_with_cache(
-                "dataset_report",
-                [{"role": "system", "content": entry.get("system", "")},
-                 {"role": "user", "content": prompt}],
-                temperature=0.3, max_tokens=4000,
-            )
-            out = (out or "").strip()
-            if out.startswith("```"):
-                out = re.sub(r"^```(?:html)?\s*", "", out)
-                out = re.sub(r"```\s*$", "", out)
-            if "<" not in out or ">" not in out:
-                raise RuntimeError("fallback 也未产出 HTML")
-            return {"ok": True, "used_ai": True, "markdown_len": len(md_text),
-                    "filtered": None, "analysis": "", "html": out, "fallback": True,
-                    "note": f"AI 主链路失败（{str(e)[:150]}），已回退数据集生成"}
-        except Exception as e2:
-            raise HTTPException(502, f"AI 生成失败且回退失败: {e2}")
-
-
-@app.post("/api/export/tasks")
-def export_tasks(payload: ExportTasksIn):
-    """导出任务明细为 CSV（utf-8-sig，Excel 打开不乱码）。"""
-    import pandas as pd
-    ids = [s.strip() for s in payload.sheet_ids.split(",") if s.strip()]
-    sheets = [WORKSPACE["sheets"][sid] for sid in ids if sid in WORKSPACE["sheets"]]
-    if not sheets:
-        sheets = list(WORKSPACE["sheets"].values())
-    if not sheets:
-        raise HTTPException(400, "工作区暂无任务可导出")
-    rows = []
-    for sh in sheets:
-        for t in sh["project"].tasks:
-            d = t.to_dict()
-            rows.append({
-                "任务名称": d.get("name", ""),
-                "负责人": d.get("owner", ""),
-                "进度%": d.get("progress"),
-                "状态": d.get("status", ""),
-                "计划开始": d.get("plan_start", ""),
-                "计划完成": d.get("plan_end", ""),
-                "实际完成": d.get("actual_end", ""),
-                "依赖任务": d.get("depends_on", ""),
-                "权重": d.get("weight", 1),
-                "偏慢豁免": "是" if d.get("slow_ok") else "",
-                "备注": d.get("note", ""),
-            })
-    df = pd.DataFrame(rows)
-    bio = io.BytesIO()
-    df.to_csv(bio, index=False, encoding="utf-8-sig")
-    bio.seek(0)
-    fname = f"任务明细_{datetime.now().strftime('%Y%m%d_%H%M')}.csv"
-    return StreamingResponse(bio, media_type="text/csv; charset=utf-8",
-                             headers={"Content-Disposition": _content_disposition(fname)})
-
-
-# ================= 规则 =================
 @app.get("/api/rules")
 def get_rules():
     return {"rules": rules_mod.load_rules(), "meta": rules_mod.RULE_META}
@@ -1069,76 +498,7 @@ def get_rules():
 def save_rules(payload: RulesIn):
     rules = rules_mod.save_rules(payload.dict(exclude_none=True))
     # 规则变更后刷新已解析 sheet 的统计
-    _recompute_all()
     return {"ok": True, "rules": rules, "note": "已保存并写入历史"}
-
-
-@app.post("/api/rules/reset")
-def reset_rules():
-    rules = rules_mod.reset_rules()
-    _recompute_all()
-    return {"ok": True, "rules": rules, "note": "已恢复默认（旧规则已归档到历史）"}
-
-
-class RulesLearnIn(BaseModel):
-    ignore_names: List[str] = []      # 校对删除的任务名 → 忽略词
-    status_maps: Dict[str, str] = {}  # 校对修正的状态变体 → 标准状态
-
-
-@app.post("/api/rules/learn")
-def learn_rules(payload: RulesLearnIn):
-    """校对回写（路线C）：把用户在校对页的修正学习进规则库，本地持久化，越用越准。"""
-    rules = rules_mod.load_rules()
-    learned = {"ignore": [], "status": []}
-    ignore = rules.setdefault("ignore_keywords", [])
-    for name in payload.ignore_names:
-        n = (name or "").strip()
-        if n and n not in ignore:
-            ignore.append(n)
-            learned["ignore"].append(n)
-    status = rules.setdefault("status_words", {})
-    for src, dst in (payload.status_maps or {}).items():
-        s, d = (src or "").strip(), (dst or "").strip()
-        if s and d and d in rules_mod.STATUS_VALUES and status.get(s) != d:
-            status[s] = d
-            learned["status"].append(f"{s}→{d}")
-    if learned["ignore"] or learned["status"]:
-        rules_mod.save_rules(rules)
-    return {"ok": True, "learned": learned,
-            "note": f"已学习忽略词 {len(learned['ignore'])} 条、状态词 {len(learned['status'])} 条（本地生效）"}
-
-
-class RulesConverseIn(BaseModel):
-    instruction: str = ""
-
-
-@app.post("/api/rules/converse")
-def rules_converse(payload: RulesConverseIn):
-    """规则对话式管理（第一步）：用户用自然语言描述规则/工作要求 →
-    AI 理解并转成结构化规则 JSON（待人工确认，不直接写入）。"""
-    from pmo_report import prompts as prompts_mod
-    instr = (payload.instruction or "").strip()
-    if not instr:
-        raise HTTPException(400, "请描述您想要的规则或工作要求")
-    entry = prompts_mod.get_prompt("rule_intent")
-    prompt = prompts_mod.render_user(entry, {"instruction": instr[:1000]})
-    try:
-        out = ai_mod.call_with_cache(
-            "rule_intent",
-            [{"role": "system", "content": entry.get("system", "")},
-             {"role": "user", "content": prompt}],
-            temperature=0, max_tokens=400,
-        )
-    except Exception as e:
-        raise HTTPException(502, f"AI 理解失败（可检查 API Key）：{e}")
-    m = re.search(r"\{.*\}", out or "", re.S)
-    data = json.loads(m.group(0)) if m else {}
-    if not data.get("type") or data.get("type") == "other":
-        return {"ok": True, "understood": False,
-                "note": "AI 未能识别为规则需求，请换一种表达（如：超期超过10天标记高风险）",
-                "draft": None}
-    return {"ok": True, "understood": True, "draft": data,
-            "note": "请确认下面 AI 理解的规则，确认后将写入规则库"}
 
 
 class RulesConfirmIn(BaseModel):
@@ -1214,7 +574,6 @@ def rules_converse_confirm(payload: RulesConfirmIn):
     else:
         raise HTTPException(400, f"暂不支持该规则类型: {typ}")
     rules_mod.save_rules(rules)
-    _recompute_all()
     return {"ok": True, "rules": rules, "applied": applied,
             "note": "已确认并写入规则库"}
 
@@ -1366,53 +725,7 @@ def batch_delete_rules(payload: RuleBatchDeleteIn):
     else:
         raise HTTPException(400, f"不支持批量删除类型: {kind}")
     rules_mod.save_rules(rules)
-    _recompute_all()
     return {"ok": True, "removed": removed, "note": f"已批量删除 {len(removed)} 条"}
-
-
-class RuleImportTextIn(BaseModel):
-    text: str = ""
-    force_type: str = ""   # 可选：requirement(全部按分析) / generation_requirement(全部按生成) / 空=AI自动判断
-
-
-@app.post("/api/rules/import-text")
-def import_rules_text(payload: RuleImportTextIn):
-    """一键导入规则文档（txt/md/Word 提取的文本）→ AI 批量理解成多条规则（待确认，不直接写入）。
-
-    返回 {ok, drafts: [规则JSON...], note}。前端逐条确认后调 converse/confirm 写入。
-    force_type 非空时强制所有条目为该类型（用户手动指定分析/生成）。"""
-    from pmo_report import prompts as prompts_mod
-    text = (payload.text or "").strip()
-    if not text:
-        raise HTTPException(400, "文本为空")
-    force_type = (payload.force_type or "").strip()
-    entry = prompts_mod.get_prompt("rule_batch_intent")
-    force_hint = ""
-    if force_type == "requirement":
-        force_hint = "用户已指定：本批全部按「分析要求」处理，所有条目的 type 一律填 requirement。"
-    elif force_type == "generation_requirement":
-        force_hint = "用户已指定：本批全部按「生成要求」处理，所有条目的 type 一律填 generation_requirement。"
-    prompt = prompts_mod.render_user(entry, {"rule_text": text[:8000],
-                                             "force_hint": force_hint})
-    try:
-        out = ai_mod.call_with_cache(
-            "rule_batch_intent",
-            [{"role": "system", "content": entry.get("system", "")},
-             {"role": "user", "content": prompt}],
-            temperature=0.1, max_tokens=1500,
-        )
-    except Exception as e:
-        raise HTTPException(502, f"AI 批量理解失败：{e}")
-    import re as _re
-    m = _re.search(r"\[.*\]", out or "", _re.S)
-    drafts = []
-    if m:
-        try:
-            drafts = json.loads(m.group(0))
-        except Exception:
-            drafts = []
-    drafts = [d for d in drafts if isinstance(d, dict) and d.get("title")]
-    return {"ok": True, "drafts": drafts, "note": f"AI 批量理解出 {len(drafts)} 条规则，请逐条确认"}
 
 
 @app.post("/api/rules/template-extract")
@@ -1435,50 +748,6 @@ async def rules_template_extract(file: UploadFile = File(...)):
     finally:
         os.path.exists(tmp) and os.remove(tmp)
     return {"ok": True, "filename": file.filename or "", "text": text[:20000]}
-
-
-@app.get("/api/rules/export")
-def export_rules():
-    """导出规则库为 JSON 文件（备份/迁移用）。"""
-    rules = rules_mod.load_rules()
-    bio = io.BytesIO(json.dumps(rules, ensure_ascii=False, indent=2).encode("utf-8"))
-    bio.seek(0)
-    return StreamingResponse(bio, media_type="application/json; charset=utf-8",
-                             headers={"Content-Disposition": _content_disposition("规则库导出.json")})
-
-
-class RulesImportIn(BaseModel):
-    rules: Dict
-
-
-@app.post("/api/rules/import")
-def import_rules(payload: RulesImportIn):
-    """导入规则库（合并：导入值覆盖同名键，其余保留）。"""
-    rules = rules_mod.load_rules()
-    for k, v in (payload.rules or {}).items():
-        if k in rules_mod.DEFAULT_RULES and v is not None:
-            rules[k] = v
-    normed = rules_mod.save_rules(rules)
-    _recompute_all()
-    return {"ok": True, "rules": normed, "note": "已导入规则库并重新统计"}
-
-
-@app.get("/api/rules/history")
-def rules_history():
-    return {"history": rules_mod.history()}
-
-
-def _recompute_all():
-    """按当前规则重算所有 sheet 的统计。"""
-    rules = load_rules()
-    for sh in WORKSPACE["sheets"].values():
-        if "project" in sh:
-            sh["_stats"] = analyze(sh["project"], rules=rules).to_dict()
-
-
-# ================= 设置（API Key 本地管理） =================
-# 安全设计：Key 仅写入本机 config/keys.json（已被 .gitignore 排除），
-# 所有读取接口只返回脱敏信息，绝不返回完整 Key。
 @app.get("/api/settings/key")
 def get_key_setting():
     return {"status": ai_mod.key_status()}
@@ -1505,27 +774,9 @@ def test_key_setting(payload: KeyTestIn):
     return ai_mod.test_api_key(payload.api_key or None)
 
 
-@app.get("/api/settings/tokens")
-def get_token_usage():
-    """Token 用量统计（累计 + 最近明细 + 缓存命中）。"""
-    return ai_mod.usage_summary()
-
-
-@app.post("/api/settings/tokens/clear")
-def clear_token_usage():
-    ai_mod.clear_usage()
-    return {"ok": True, "note": "已清空 Token 用量统计"}
-
-
 class AiConfigIn(BaseModel):
     model: str = ""
     base_url: str = ""
-
-
-@app.get("/api/settings/ai")
-def get_ai_config():
-    """当前 AI 模型与接口配置（只回脱敏信息，本地持久化）。"""
-    return {"config": ai_mod.ai_config(), "models": ai_mod.SUPPORTED_MODELS}
 
 
 @app.get("/api/config-schema")
@@ -1719,21 +970,6 @@ def _append_template_history(fmt: str, html: str = "", blocks: Optional[list] = 
         pass
 
 
-@app.get("/api/template/history")
-def template_history():
-    """模板版本历史（模板库日历浏览）。"""
-    if not os.path.exists(TEMPLATE_HISTORY_FILE):
-        return {"items": []}
-    try:
-        with open(TEMPLATE_HISTORY_FILE, "r", encoding="utf-8") as f:
-            hist = json.load(f) or []
-    except Exception:
-        hist = []
-    items = [{"ts": h.get("ts", ""), "fmt": h.get("fmt", ""),
-              "preview": (h.get("html") or "")[:200]} for h in reversed(hist)]
-    return {"items": items}
-
-
 # ================= 模板库（命名入库 / 分类 / 按日期 / 生成时选用） =================
 class TemplateLibIn(BaseModel):
     name: str = ""
@@ -1792,32 +1028,6 @@ def reset_template():
     return {"ok": True}
 
 
-class CustomBlockIn(BaseModel):
-    name: str
-    definition: Dict
-
-
-@app.get("/api/custom_blocks")
-def get_custom_blocks():
-    """自定义块库（AI 提示词块/公式计算块，本地保存复用）。"""
-    from pmo_report import custom_blocks
-    return {"blocks": custom_blocks.load_blocks()}
-
-
-@app.post("/api/custom_blocks")
-def save_custom_block(payload: CustomBlockIn):
-    from pmo_report import custom_blocks
-    blocks = custom_blocks.save_block(payload.name, payload.definition)
-    return {"ok": True, "blocks": blocks, "note": f"已保存自定义块「{payload.name}」"}
-
-
-@app.post("/api/custom_blocks/delete")
-def delete_custom_block(payload: RenameIn):
-    from pmo_report import custom_blocks
-    blocks = custom_blocks.delete_block(payload.name)
-    return {"ok": True, "blocks": blocks, "note": "已删除"}
-
-
 @app.post("/api/template/parse")
 async def template_parse(file: UploadFile = File(...)):
     """上传模板文件（docx/pdf/html/md/txt）-> 抽取文本 -> AI 转 HTML 模板。"""
@@ -1849,146 +1059,7 @@ async def template_parse(file: UploadFile = File(...)):
                 "error": f"AI 解析失败（{e}）。以下是抽取的原始文本，可手动整理。"}
 
 
-class TemplateTuneIn(BaseModel):
-    template_html: str = ""
-    tune_request: str = ""
-
-
-@app.post("/api/template/tune")
-def template_tune(payload: TemplateTuneIn):
-    """模板对话微调：基于当前模板 HTML + 用户调整要求，AI 重写模板。
-
-    返回 {ok, html}。失败抛 502（无 Key 或 AI 出错）。"""
-    from pmo_report import prompts as prompts_mod
-    tpl = (payload.template_html or "").strip()
-    req = (payload.tune_request or "").strip()
-    if not tpl or not req:
-        raise HTTPException(400, "模板与调整要求不能为空")
-    entry = prompts_mod.get_prompt("template_tune")
-    prompt = prompts_mod.render_user(entry, {"template_html": tpl[:8000],
-                                             "tune_request": req[:500]})
-    try:
-        out = ai_mod.call_with_cache(
-            "template_tune",
-            [{"role": "system", "content": entry.get("system", "")},
-             {"role": "user", "content": prompt}],
-            temperature=0.3, max_tokens=4000,
-        )
-    except Exception as e:
-        raise HTTPException(502, f"AI 微调失败（可检查 API Key）：{e}")
-    html = _strip_code_block(out or "")
-    if "<" not in html or ">" not in html:
-        raise HTTPException(502, "AI 未产出有效 HTML 模板")
-    return {"ok": True, "html": html}
-
-
 # ================= 周报生成 =================
-@app.post("/api/generate")
-async def generate(
-    sheet_ids: str = Form(""),        # 逗号分隔；空则用所有 sheet 或上传文件（已弃用，请用 /api/generate/one）
-    project_name: str = Form(""),
-    period: str = Form(""),
-    use_ai: bool = Form(True),
-    template_blocks: Optional[str] = Form(None),  # JSON blocks（可视化编辑器画布）
-    files: List[UploadFile] = File(None),
-):
-    gen_template = None
-    if template_blocks and template_blocks.strip():
-        try:
-            gen_template = json.loads(template_blocks)
-        except Exception:
-            gen_template = None
-
-    # 收集要统计的 sheet project
-    sheet_objs = []
-    if sheet_ids.strip():
-        for sid in [s.strip() for s in sheet_ids.split(",") if s.strip()]:
-            if sid in WORKSPACE["sheets"]:
-                sheet_objs.append(WORKSPACE["sheets"][sid])
-    elif files and any(f.filename for f in files):
-        for uf in files:
-            if not uf.filename:
-                continue
-            try:
-                tmp = _save_upload_to_tmp(uf)
-                proj = parse_file(tmp, project_name=project_name, period=period)
-                os.path.exists(tmp) and os.remove(tmp)
-            except Exception:
-                continue
-            sheet_objs.append({"name": proj.name, "project": proj})
-    else:
-        # 没有指定 -> 用当前工作区所有 sheet（连同分组归属标识）
-        for sh in WORKSPACE["sheets"].values():
-            sheet_objs.append(sh)
-
-    frame = "分组汇总" if sheet_ids.strip() else "全工作区汇总"
-    gen = ReportGenerator(template=gen_template) if gen_template is not None else ReportGenerator()
-    rules = load_rules()
-    generated = []
-
-    # 按分组聚合生成汇总周报（若 sheet_ids 指定的 sheet 同属一个分组，可按组）
-    stats_list = []
-    for sh in sheet_objs:
-        proj = sh["project"]
-        stats_list.append(analyze(proj, rules=rules))
-
-    # 多 sheet：生成一组合并统计（含任务去重）
-    merged = _merge_stats(stats_list, name=project_name or "项目汇总", period=period, rules=rules)
-    prev = _latest_prev_stats(merged.project.name)   # 环比基准（上一期统计）
-    if prev:
-        # 环比增强①：连续两周无进展的任务（进度未变且未完成）
-        prev_tp = prev.get("tasks_progress") or {}
-        no_progress = [
-            ts.task.name for ts in merged.task_stats
-            if (ts.task.progress is not None and prev_tp.get(ts.task.name) is not None
-                and abs(prev_tp.get(ts.task.name, 0) - ts.task.progress) < 0.5
-                and ts.task.progress < 100)
-        ]
-        # 环比增强②：只对比两周都存在的任务集合，剔除集合变化影响
-        cur_tp = {ts.task.name: ts.task.progress for ts in merged.task_stats}
-        overlap = [n for n in cur_tp if n in prev_tp]
-        prev = dict(prev)
-        if no_progress:
-            prev["no_progress"] = no_progress[:10]
-        if len(overlap) >= 3:
-            prev_done = sum(1 for n in overlap if (prev_tp[n] or 0) >= 100)
-            cur_done = sum(1 for n in overlap if (cur_tp[n] or 0) >= 100)
-            prev["overlap_rate"] = {
-                "prev": round(prev_done / len(overlap) * 100, 1),
-                "cur": round(cur_done / len(overlap) * 100, 1),
-                "n": len(overlap),
-            }
-    tokens_before = ai_mod.usage_summary()
-    # 分项目数据（供「重点项目表/分项目区块」等精细模块）
-    projects_data = [
-        {"name": (sh.get("name") or sh["project"].name or f"项目{i+1}"), "stats": st.to_dict()}
-        for i, (sh, st) in enumerate(zip(sheet_objs, stats_list))
-    ]
-    result = gen.render(merged, use_ai=use_ai, rules=rules, prev_stats=prev, projects_data=projects_data)
-    tokens_after = ai_mod.usage_summary()
-    ignored_total = sum((sh.get("parse_stats") or {}).get("ignored", 0) for sh in sheet_objs)
-    generated.append({
-        "project": merged.project.name,
-        "report": result["report_html"],
-        "report_text": result["report_text"],
-        "ai_used": result.get("ai_used", False),
-        "ai_error": result.get("error"),
-        "numbers_corrected": result.get("numbers_corrected", 0),
-        "has_prev": bool(prev),
-        "delta": ReportGenerator._delta_parts(merged, prev),
-        "stats": merged.to_dict(),
-        "frame": frame,
-        "n_sheets": len(stats_list),
-        "ignored": ignored_total,
-        "tokens": {
-            "in": tokens_after["total_in"] - tokens_before["total_in"],
-            "out": tokens_after["total_out"] - tokens_before["total_out"],
-            "cache_hits": tokens_after["cache_hits"] - tokens_before["cache_hits"],
-        },
-    })
-    return {"generated": generated}
-
-
 class GenerateOneIn(BaseModel):
     """一条线生成：选数据源/分组 + 模板（可选）→ 后端按数据形态自动选管线。"""
     source_id: str = ""
@@ -2118,28 +1189,6 @@ def _dedupe_tasks(tasks: List[Task]) -> List[Task]:
         if key not in best or _task_completeness(t) > _task_completeness(best[key]):
             best[key] = t
     return list(best.values())
-
-
-def _merge_stats(stats_list, name="项目汇总", period="", rules: Optional[Dict] = None):
-    """把多个 ProjectStats 合并为一个（用于分组/全工作区汇总周报）。
-    - 任务先去重（名称+负责人），再统一按 analyze 重新统计
-    - 完成率/平均进度支持任务权重，避免大小表权重失衡与重复计数"""
-    from pmo_report.engine import analyze as _analyze
-    from pmo_report.models import Project
-    from copy import deepcopy
-    all_tasks: List[Task] = []
-    seen_keys = set()
-    for s in stats_list:
-        for t in s.project.tasks:
-            key = (t.name, t.owner)
-            if key not in seen_keys:
-                seen_keys.add(key)
-                all_tasks.append(t)
-    all_tasks = _dedupe_tasks(all_tasks)
-    merged_proj = Project(name=name, period=period, tasks=all_tasks)
-    return _analyze(merged_proj, rules=rules)
-
-
 # ================= 导出 =================
 def _content_disposition(filename: str):
     """构造 Content-Disposition，支持中文文件名（用 RFC5987 filename* 编码）。"""
@@ -2196,44 +1245,6 @@ def list_history():
     return {"items": items}
 
 
-class SummarizeIn(BaseModel):
-    names: List[str] = []
-
-
-@app.post("/api/documents/summarize")
-def summarize_documents(payload: SummarizeIn):
-    """文稿库多选汇总：把多份已保存的日报/周报统计合并生成一份汇总稿（确定性，不调 AI）。"""
-    from pmo_report.engine import ProjectStats
-    from pmo_report.models import Project
-    wanted = set(payload.names)
-    entries = [e for e in _load_stats_history() if e.get("file") in wanted]
-    if not entries:
-        raise HTTPException(400, "未找到可汇总的文稿（需先保存且带统计快照）")
-    def s(e): return e.get("stats") or {}
-    total = sum(s(e).get("total", 0) for e in entries)
-    done = sum(s(e).get("done", 0) for e in entries)
-    in_prog = sum(s(e).get("in_progress", 0) for e in entries)
-    not_started = sum(s(e).get("not_started", 0) for e in entries)
-    delayed = sum(s(e).get("delayed", 0) for e in entries)
-    risk = sum(s(e).get("risk", 0) for e in entries)
-    weights = [s(e).get("total", 0) for e in entries]
-    wsum = sum(weights)
-    st = ProjectStats(project=Project(name=f"多文稿汇总（{len(entries)} 份）", period=""))
-    st.total_tasks = total
-    st.done_count = done
-    st.in_progress_count = in_prog
-    st.not_started_count = not_started
-    st.delayed_count = delayed
-    st.risk_count = risk
-    st.completion_rate = round(sum(s(e).get("completion_rate", 0) * w for e, w in zip(entries, weights)) / wsum, 1) if wsum else 0
-    st.avg_progress = round(sum(s(e).get("avg_progress", 0) * w for e, w in zip(entries, weights)) / wsum, 1) if wsum else 0
-    gen = ReportGenerator()
-    result = gen.render(st, use_ai=False, rules=load_rules())
-    return {"ok": True, "report": result["report_html"], "report_text": result["report_text"],
-            "project": st.project.name, "n": len(entries),
-            "names": [e.get("file", "") for e in entries]}
-
-
 @app.get("/api/history/{name}")
 def view_history(name: str):
     safe = os.path.basename(name)
@@ -2259,34 +1270,6 @@ def delete_history(name: str):
     except Exception:
         pass
     return {"ok": True}
-
-
-class RenameHistoryIn(BaseModel):
-    new_name: str
-
-
-@app.post("/api/history/{name}/rename")
-def rename_history(name: str, payload: RenameHistoryIn):
-    """重命名历史周报（同步更新环比快照的 file 标识）。"""
-    safe = os.path.basename(name)
-    new_name = os.path.basename((payload.new_name or "").strip())
-    if not new_name or new_name == safe:
-        raise HTTPException(400, "新名称无效")
-    old_full = os.path.join(HISTORY_DIR, safe)
-    if not os.path.exists(old_full):
-        raise HTTPException(404, "历史周报不存在")
-    new_full = os.path.join(HISTORY_DIR, new_name)
-    os.rename(old_full, new_full)
-    h = _load_stats_history()
-    for e in h:
-        if e.get("file") == safe:
-            e["file"] = new_name
-    try:
-        with open(STATS_HISTORY_FILE, "w", encoding="utf-8") as f:
-            json.dump(h, f, ensure_ascii=False, indent=2)
-    except Exception:
-        pass
-    return {"ok": True, "name": new_name}
 
 
 @app.get("/api/settings/trend")

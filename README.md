@@ -1,143 +1,101 @@
 # PM Report Agent · AI 项目管理智能周报助手
 
-把 Excel / CSV / Word / PDF 等**混合格式**的项目资料，自动提炼为结构化项目进度，用**规则引擎统计 + AI 生成专业周报**。
+把 Excel / CSV / Word / PDF 等**混合格式**的项目资料，通过 **AI 分析**自动提炼为结构化项目进度（任务/指标/里程碑/风险/决策），并**按你的模板原地更新**生成专业周报——论述风格、用词、格式与模板保持一致。
 
-> 解决 PMO 项目管理的日常痛点：项目经理每周手工汇总多个单位/任务的进度、写周报，重复且易错。本工具让这件事"一键完成"。
+> 解决 PMO 项目管理的日常痛点：项目经理每周手工汇总多个单位/任务的进度、写周报，重复且易错。本工具让这件事"上传 → 分析 → 按模板生成"一条线完成。
 
-## ✨ 新版：Web 操作面板
+## 核心思路：主体是 AI
 
-无需敲命令，打开浏览器即可使用 —— 上传数据、配置规则、定制模板、生成周报、管理历史，一站式完成。
-
-```bash
-# 启动面板
-python -m uvicorn app:app --reload
-# 浏览器打开 http://127.0.0.1:8000
-```
-
-**面板功能：**
-- **数据**：拖拽上传 Excel/CSV/Word/PDF，自动解析并展示任务表格 + 统计看板（完成率/进度/风险）+ **数据体检**（缺失字段提示）；支持**✏ 编辑任务校对**、**导出明细 CSV**
-- **规则配置**：可视化调节风险阈值（超期天数、临近预警、进度偏慢）+ **目标进度曲线**（线性/S 型），支持"恢复默认"清理旧规则、查看历史规则
-- **模板**：可视化拖拽模块化模板编辑器（含 **环比上周** 模块），保存后自动延用
-- **周报/历史**：一键生成周报（可开 AI 增强，**自动校正 AI 数字**、**与上周环比**），保存到历史、随时回溯查看
-- **设置**：Web 面板直接配置 DeepSeek API Key（仅保存本地 config/keys.json，接口只返回脱敏信息）；**AI Token 用量统计**（输入/输出/缓存命中/估算费用）
-- **省钱设计**：AI 结果本地缓存（相同数据不重复付费）、提炼只送规则预筛的候选行、生成前数据体检确认
-
-## 核心能力
-
-1. **多格式解析** —— 支持 Excel(.xlsx) / CSV / Word(.docx) / PDF(含扫描件 OCR) 四种输入
-2. **统一进度模型** —— 无论来源如何，归一化为"任务、负责人、进度、状态、计划完成"的结构
-3. **规则引擎统计** —— 完成率、总进度、滞后天数、风险分级（纯本地、确定性、不依赖网络）
-4. **风险可解释** —— 超期/临近/偏慢三级分级 + **未按时启动预警** + **显式状态优先**（尊重文件里"已滞后/有风险"等人工标注）+ **任务依赖风险传递** + 单任务**偏慢豁免**
-5. **AI 周报生成** —— 基于统计结果 + 你的模板，用大模型生成专业周报正文；**AI 数字自动校正**防编造
-6. **周报环比** —— 自动与上一期对比（完成率/平均进度/风险/滞后），趋势一目了然
-7. **模板可定制** —— 模块化 JSON blocks 可视化编辑，保存后**后续自动延用**
+- **上传即分析**：文件上传后由分析 AI 提取结构化条目（任务/指标/里程碑/风险/决策）存入分类仓；
+- **看板只展示 AI 提取的数据**：无 AI 数据时不显示任何规则推算的假 KPI；
+- **规则参数 = AI 的处理约定**：超期天数/偏慢阈值/忽略词/状态词等作为指令注入分析 AI，由 AI 按约定判断（风险等级、重点关注标记），不是规则引擎代算；
+- **模板原地更新**：生成时把模板原文交给生成 AI，只替换与数据对应的位置（数字/日期/状态/任务名），其余文字、风格、格式原样保留。
 
 ## 快速开始
 
 ```bash
-# 1. 安装依赖（建议用 ARM 原生的 conda 环境，避免 Rosetta 编码问题）
-conda activate base
+# 1. 安装依赖
 pip install -r requirements.txt
+# 注意：PDF/Word 解析用到 markitdown，需 Python 3.10+；PDF OCR 需 tesseract（可选）
 
 # 2. 配置 DeepSeek API Key（三选一）
 export DEEPSEEK_API_KEY="sk-xxx"          # 方式一：环境变量
-# 编辑 config/keys.json                     # 方式二：配置文件
-# 打开面板 →「设置」标签页填写               # 方式三：Web 面板（推荐，仅保存本地，接口只返回脱敏信息）
+# 编辑 config/keys.json                     # 方式二：配置文件（gitignored）
+# 打开面板 →「AI 配置库」填写              # 方式三：Web 面板（仅保存本地，接口只返回脱敏信息）
 
-# 3. 一键生成周报
-python run.py report 输入文件或目录 --period 2026-W33
+# 3. 启动 Web 面板
+python -m uvicorn app:app --reload
+# 浏览器打开 http://127.0.0.1:8000
 ```
 
-## 示例
+## 面板功能
 
-```bash
-# 单个文件
-python run.py report examples/input/进度表_示例.csv --period 2026-W33
+- **数据**：拖拽上传 Excel/CSV/Word/PDF（上传即 AI 分析）；左侧源文件列表（可分组，一个周报引用整组多数据集）；点击源文件 → Excel 式表格展示 AI 提取条目，字段自适应（指标→数值、任务→进度/状态、说明类→整段文本），并可自定义显示哪些「性质列」
+- **看板**：KPI 卡 + 分类区块 + ★重点关注专区（性质来自分析要求，命中即统计）；「⚙ 定制看板」对话式调整布局（顺序/显隐/颜色/文案，配置存本地，只读访问配置库）
+- **模板 & 生成**：上传模板（Word/PDF/HTML）→ AI 解析 → 确认入库（自动保留模板原文）；生成 = 按模板原地更新，支持整组数据源引用
+- **设置**：Web 面板直接配置 DeepSeek API Key（仅保存本地 config/keys.json，接口只返回脱敏信息）
 
-# 整个目录（自动识别所有支持的格式）
-python run.py report examples/input/ --period "8月第3周"
+### 数据库中心（📚 按钮）
 
-# 导出到文件 + 不带 AI（仅规则引擎）
-python run.py report examples/input/ --no-ai -o 周报.md
-
-# 使用自定义模板
-python run.py report examples/input/ --template 我的模板.md
-```
-
-## 模板定制
-
-默认模板包含以下占位符，会在生成时替换：
-
-| 占位符 | 说明 |
-|--------|------|
-| `{project_name}` | 项目名称 |
-| `{period}` | 统计周期 |
-| `{today}` | 生成日期 |
-| `{overview}` | 进展综述（AI 或规则生成） |
-| `{stats_table}` | 核心数据表格 |
-| `{status_summary}` | 已完成/进行中摘要 |
-| `{risks}` | 风险与关注事项 |
-| `{next_plan}` | 下周计划 |
-
-**保存自定义模板**（后续生成自动延用）：
-```bash
-python run.py template --file 我的模板.md    # 导入并保存
-python run.py template --show                 # 查看当前模板
-python run.py template --reset                # 恢复默认
-```
+- **原始数据库**：上传的原始文件按日期归档，删除留痕可撤销
+- **文稿库**：生成的日/周报归档、查看、重命名、删除
+- **模板库**：命名入库的模板，区分周报/日报，按日期/分类选取
+- **规则库**：分析要求 + 生成要求（对话式添加/文档导入/可改可删）；参数约定（超期/偏慢/忽略词/状态词/列名映射）作为分析 AI 的处理指令
+- **AI 配置库**：API Key / 模型 / 接口地址
+- **提示词库**：全部 AI 提示词（system/user/few-shot），可编辑保存、版本历史回退
 
 ## 系统架构
 
 ```
-       Web 操作面板（FastAPI + 浏览器）
-        │  上传数据 / 配规则 / 编辑模板 / 生成 / 历史
-        ▼
-输入（Excel/CSV/Word/PDF）         config/rules.json
-        │                                ▲
-        ▼                                │ 规则可配置
-┌──────────────┐     ┌─────────────────┐────┐
-│  解析器层      │ ──► │   统一进度模型     │  规则引擎
-│  tabular/text │     │  Project + Task   │  (阈值可调)
-└──────────────┘     └─────────────────┘────┘
-                              │
-                              ▼
-                     ┌──────────────┐
-                     │  AI 周报生成   │  DeepSeek + 模板(可定制)
-                     └──────────────┘
-                              │
-                              ▼
-                        history/（历史周报）
+       Web 面板（FastAPI + 浏览器）
+         │  上传数据 / 看板 / 模板 / 生成
+         ▼
+ 输入（Excel/CSV/Word/PDF）
+         │
+         ▼  markitdown 转文本 + 处理约定注入
+  分析 AI（提取结构化条目） ──► 分类仓（SQLite）
+         │                              │
+         │                    看板（只展示 AI 提取条目）
+         │                              │
+         ▼                              ▼
+  生成 AI ◄── 模板原文（原地更新）   ⚙ 定制看板（配置存本地）
+         │
+         ▼
+    周报 HTML（可导出 Word / 存入文稿库）
 ```
 
 ## 目录结构
 
 ```
 pm-report-agent/
-├── run.py                 # CLI 入口
-├── app.py                 # FastAPI Web 面板后端
-├── web/
-│   └── index.html         # 操作面板前端
+├── app.py                 # FastAPI Web 后端
+├── run.py                 # CLI 入口（旧版，仍可用）
 ├── requirements.txt       # 依赖
-├── config/
-│   ├── keys.json          # DeepSeek API Key 配置
-│   └── rules.json         # 规则配置（默认值，可被面板覆盖）
+├── web/
+│   ├── index.html         # 主面板（数据/看板/模板&生成/设置）
+│   ├── libraries.html     # 数据库中心入口
+│   └── lib/               # 各独立库页面 + chatbox/formkit/cal 组件
 ├── pmo_report/
-│   ├── models.py          # 数据模型
-│   ├── engine.py          # 规则引擎（阈值可配置）
-│   ├── rules.py           # 规则配置管理 + 历史/清理
-│   ├── report.py          # 周报生成器 + 模板系统
-│   ├── ai.py              # DeepSeek 客户端/AI增强
-│   └── parsers/           # 解析器（Excel/CSV/Word/PDF）
-├── templates/             # 周报模板
-├── history/               # 历史周报（运行期生成）
+│   ├── ai.py              # DeepSeek 客户端（缓存/Key 管理）
+│   ├── ai_analysis.py     # 分析 AI：提取结构化条目（处理约定注入）
+│   ├── ai_dialogue.py     # 通用对话弹窗后端（规则/模板/看板定制）
+│   ├── ai_pipeline.py     # 文档转文本 / AI 分析辅助
+│   ├── prompts.py         # 3 类提示词（分析/生成/规则配置）+ 版本历史
+│   ├── datastore.py       # SQLite：源文件/条目/模板/分组/留痕
+│   ├── rules.py           # 规则配置（参数→分析 AI 指令）
+│   ├── dataset.py         # 数据集板块解析（xlsx）
+│   └── parsers/           # 文本/表格解析器
+├── config/                # 运行期配置（全部 gitignored）
+├── data_sources/          # 上传文件归档（运行期生成，gitignored）
 └── examples/              # 示例数据
 ```
 
 ## 环境要求
 
-- Python 3.10+（**ARM Mac 建议用 miniforge/conda 的 ARM Python，避免 Rosetta 下 urllib3 编码问题**）
-- DeepSeek API Key（可选，不配则用规则引擎回退文案）
+- Python 3.10+（ARM Mac 建议用 miniforge/conda 的 ARM Python）
+- DeepSeek API Key（不配置则无法分析/生成——本工具主体是 AI，不配 Key 时仅保留原始文件，不产生假数据）
 - PDF OCR 需 tesseract（`brew install tesseract tesseract-lang`）——可选，纯文本 PDF 不需要
 
 ## 许可证
+
 MIT
