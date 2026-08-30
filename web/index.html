@@ -821,12 +821,7 @@ async function generateReport(){
   const t0 = Date.now();
   const sid = $('genSourceSel') ? $('genSourceSel').value : '';
   const gname = $('genGroupSel') ? $('genGroupSel').value : '';
-  // 分组优先：引用组内全部源文件（一个周报多次数据集）
-  let source_ids = [];
-  if(gname){
-    const g = srcGroups.find(x=>x.name===gname);
-    source_ids = (g && g.sources ? g.sources.map(s=>s.id) : []);
-  }
+  // 分组优先：按分组名交给后端展开组内全部源文件（一个周报多次数据集）
   if(!gname && !sid){ alert('请选择数据源（或数据分组）'); return; }
   const tplId = $('genTplSel') ? $('genTplSel').value : '';
   $('genMsg').className=''; $('genMsg').textContent='生成中（按模板原文更新数据，AI 保持模板风格用词）...';
@@ -834,7 +829,7 @@ async function generateReport(){
     const res=await fetch('/api/generate/one',{method:'POST',headers:{'Content-Type':'application/json'},
       body:JSON.stringify({
         source_id: sid,
-        source_ids: source_ids,
+        group_name: gname,
         template_id: tplId ? Number(tplId) : null,
         report_type: genReportType,
         project_name: $('genProject').value,

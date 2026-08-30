@@ -1064,6 +1064,7 @@ class GenerateOneIn(BaseModel):
     """一条线生成：选数据源/分组 + 模板（可选）→ 后端按数据形态自动选管线。"""
     source_id: str = ""
     source_ids: List[str] = []     # 分组生成：一次引用多个源文件（一个周报多次数据集）
+    group_name: str = ""           # 也可按分组名生成：后端自动展开组内全部源文件
     template_id: Optional[int] = None
     template_text: str = ""        # 未选库中模板时，可直传模板文本
     report_type: str = "week"
@@ -1075,7 +1076,7 @@ class GenerateOneIn(BaseModel):
 def generate_one(payload: GenerateOneIn):
     """一条线生成入口（取代三种方式分开调）。
 
-    数据源：source_id（单选）或 source_ids（分组，一个周报引用多个数据集）。
+    数据源：source_id（单选）、source_ids（多选）或 group_name（分组，自动展开组内全部源文件）。
     模板：优先 template_id 指定的库模板（用其原文 source_text 做「原地更新」），
           否则 template_text；都没有则 AI 自主编写骨架。
     生成语义：把模板原文原地更新为本周周报——找到模板中与数据对应的位置，
@@ -1085,8 +1086,12 @@ def generate_one(payload: GenerateOneIn):
     from pmo_report.dataset import sections_to_markdown
     from pmo_report import prompts as prompts_mod
 
-    # 1) 确定源文件集合（单选或分组）
+    # 1) 确定源文件集合（单选 / 多选 / 分组名展开）
     ids = [s for s in (payload.source_ids or []) if s]
+    if payload.group_name:
+        for src in datastore.sources_by_group(payload.group_name.strip()):
+            if src["id"] not in ids:
+                ids.append(src["id"])
     if payload.source_id and payload.source_id not in ids:
         ids.insert(0, payload.source_id)
     ids = list(dict.fromkeys(ids))   # 去重保序
