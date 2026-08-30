@@ -867,6 +867,255 @@ async function saveToHistory(){
       report_type:genReportType, period:$('genPeriod').value})});
   alert('已存入文稿库（可在「📚 数据库中心 → 文稿库」查看）');
 }
+
+const KIND_COLOR = {task:'#2563EB', risk:'#A33A37', issue:'#0E7490', decision:'#D97706',
+                    milestone:'#8B5CF6', metric:'#4A7A1E', raw:'#6B7280'};
+const KIND_LABEL = {task:'任务', risk:'风险', issue:'依赖/问题', decision:'决策',
+                    milestone:'里程碑', metric:'指标', raw:'原始'};
+// 字段自适应：进度/状态/数值优先展示，长文本整段展示，其余 key: value 芯片
+function dashItemFields(p){
+  const fields = (p&&p.fields)||{};
+  const entries = Object.entries(fields).length ? Object.entries(fields)
+    : Object.entries(p||{}).filter(([k])=>!['section','source_line','fields'].includes(k));
+  if(!entries.length) return '';
+  const prog = entries.find(([k])=>/进度|完成度|progress/i.test(k));
+  const stat = entries.find(([k])=>/状态|status/i.test(k));
+  const long = entries.filter(([,v])=>String(v).length>50);
+  const chips = entries.filter(([k])=>k!==(prog&&prog[0]) && k!==(stat&&stat[0]))
+    .slice(0,4).map(([k,v])=>{
+      const s = String(v);
+      if(s.length>40) return `<span class="tl">${esc(s.slice(0,40))}${s.length>40?'…':''}</span>`;
+      return `<span><span class="k">${esc(k)}</span> <b>${esc(s)}</b></span>`;
+    }).join('');
+  let html = '';
+  if(prog) html += `<span><span class="k">${esc(prog[0])}</span> <b>${esc(String(prog[1]).slice(0,24))}</b></span>`;
+  if(stat) html += `<span><span class="k">${esc(stat[0])}</span> <b>${esc(String(stat[1]).slice(0,20))}</b></span>`;
+  html += chips;
+  if(long.length){
+    const text = long.map(([k,v])=>`${k}：${v}`).join('；');
+    html += `<div class="tl" style="width:100%;margin-top:2px;">${esc(text.slice(0,120))}${text.length>120?'…':''}</div>`;
+  }
+  return html;
+}
+function dashTag(p){
+  const f = (p&&p.fields)||{};
+  // 统一重点关注标记（分析 AI 按处理约定输出 focus=是）
+  const focus = f['focus']||f['是否重点关注']||f['重点关注']||'';
+  if(/^是$|重点/.test(String(focus))) return `<span class="dash-tag" style="background:#A33A37">★ 重点关注</span>`;
+  const risk = f['风险等级']||f['risk_level']||f['level']||f['风险']||'';
+  if(/高|严重/.test(String(risk))) return `<span class="dash-tag" style="background:#A33A37">高风险</span>`;
+  if(/中|关注|警告/.test(String(risk))) return `<span class="dash-tag" style="background:#E65100">关注</span>`;
+  if(/完成|达标/.test(String(f['状态']||f['status']||''))) return `<span class="dash-tag" style="background:#2E7D32">完成</span>`;
+  return '';
+}
+// 判断条目是否重点关注（focus=是，或风险等级高/严重）
+function isFocusItem(it){
+  const f = (it&&it.payload&&it.payload.fields)||{};
+  const focus = f['focus']||f['是否重点关注']||f['重点关注']||'';
+  if(/^是$|重点/.test(String(focus))) return true;
+  const risk = f['风险等级']||f['risk_level']||f['level']||f['风险']||'';
+  return /高|严重/.test(String(risk));
+}
+function dashKpiHtml(label, value, sub, color){
+  return `<div class="dash-kpi"><div class="l">${esc(label)}</div>
+    <div class="v" style="color:${color}">${esc(value)}</div>
+    ${sub?`<div class="s">${esc(sub)}</div>`:''}</div>`;
+}
+// —— 看板定制（对话式）：AI 输出配置 JSON → localStorage → loadDashboard 按配置渲染 ——
+// 配置结构：{kpi_order,kpi_hidden,kpi_color,zone_order,zone_hidden,zone_title,zone_note,kind_order,kind_hidden}
+function getDashConfig(){ try{ return JSON.parse(localStorage.getItem('pm_dash_cfg')||'{}'); }catch(e){ return {}; } }
+function saveDashConfig(cfg){ localStorage.setItem('pm_dash_cfg', JSON.stringify(cfg||{})); }
+function resetDashConfig(){ localStorage.removeItem('pm_dash_cfg'); loadDashboard(); }
+function dashCfgPick(cfg, key, list, defOrder){
+  // 按配置的 order 排序、剔除 hidden；未配置的条目按默认顺序追加
+  const order = cfg[key+'_order']||[];
+  const hidden = cfg[key+'_hidden']||[];
+  const head = order.filter(x=>list.includes(x));
+  const tail = (defOrder||list).filter(x=>!head.includes(x));
+  return [...head, ...tail].filter(x=>list.includes(x) && !hidden.includes(x));
+}
+function customizeDashboard(){
+  const cfg = getDashConfig();
+  const kindNames = ['metric','task','risk','milestone','decision','issue','raw'];
+  // 从配置库读取真实可定制项（分析要求性质清单 + 处理约定参数 + 生成要求），只读注入
+  fetch('/api/rules').then(r=>r.json()).then(d=>{
+    const rules = d.rules||{};
+    const reqs = rules.requirements||[];
+    const zoneNames = reqs.map(r=>String(r.title||'').trim()).filter(Boolean);
+    const zoneDesc = reqs.length ? reqs.map(r=>`「${r.title}」：${r.description||''}`).join('\n') : '（无，可先到规则库添加分析要求）';
+    const procParts = [];
+    if(rules.delay_days_danger) procParts.push(`超期${rules.delay_days_danger}天→高风险`);
+    if(rules.risk_near_end_days) procParts.push(`结束前${rules.risk_near_end_days}天未完成→关注`);
+    if(rules.slow_progress_pct) procParts.push(`进度落后${rules.slow_progress_pct}pp→偏慢`);
+    const genReqs = rules.generation_requirements||[];
+    const inventory = '当前看板可定制项（来自配置库，只读）：\n'
+      + '· KPI 卡：条目总数、各性质计数、各分类计数（可排序/隐藏/改颜色，颜色给十六进制）\n'
+      + '· 置顶性质专区：' + (zoneNames.join('、')||'（暂无）') + '（可排序/隐藏/改标题/改副文案）\n'
+      + '· 分类区块：' + kindNames.join('、') + '（可排序/隐藏）\n\n'
+      + '【性质定义】每条性质即一条分析要求：\n' + zoneDesc + '\n'
+      + (procParts.length ? '【处理约定参数】' + procParts.join('；') + '\n' : '')
+      + (genReqs.length ? '【生成要求】' + genReqs.map(r=>`「${r.title}」：${r.description||''}`).join('；') + '\n' : '')
+      + '当前看板配置：' + JSON.stringify(cfg);
+    openChatBox({
+      purpose: 'dashboard_custom',
+      title: '定制看板（对话式调整 KPI/专区/分类，确认完成生效）',
+      initial: [{role:'user', content: '我想定制看板。' + inventory + '\n\n请根据我的要求调整看板布局。'}],
+      extraContext: '看板配置格式与可定制项说明（配置库只读，不要修改配置库）：' + inventory,
+      onFinalize: onDashCustomFinalize,
+    });
+  }).catch(()=>{
+    openChatBox({
+      purpose: 'dashboard_custom',
+      title: '定制看板（对话式调整 KPI/专区/分类，确认完成生效）',
+      initial: [{role:'user', content: '我想定制看板。请根据我的要求调整看板布局。'}],
+      onFinalize: onDashCustomFinalize,
+    });
+  });
+}
+async function onDashCustomFinalize(resultText){
+  let cfg = {};
+  try{
+    cfg = JSON.parse(resultText);
+  }catch(e){
+    const m = resultText.match(/\{[\s\S]*\}/);
+    if(m){ try{ cfg = JSON.parse(m[0]); }catch(e2){} }
+  }
+  if(!cfg || typeof cfg!=='object' || !Object.keys(cfg).length){
+    alert('AI 未整理出有效的看板配置：\n'+resultText.slice(0,300));
+    return;
+  }
+  // 与现有配置合并（只覆盖用户要求的字段）
+  const cur = getDashConfig();
+  const merged = {...cur, ...cfg};
+  for(const k of ['kpi_order','kpi_hidden','zone_order','zone_hidden','kind_order','kind_hidden']){
+    if(Array.isArray(cfg[k])) merged[k] = cfg[k];
+  }
+  for(const k of ['kpi_color','zone_title','zone_note']){
+    if(cfg[k] && typeof cfg[k]==='object') merged[k] = {...(cur[k]||{}), ...cfg[k]};
+  }
+  saveDashConfig(merged);
+  alert('看板配置已保存并生效（存储在本地浏览器）。点「⚙ 定制看板」可随时再调或恢复默认。');
+  loadDashboard();
+}
+async function loadDashboard(){
+  try{
+    const d = await (await fetch('/api/dashboard')).json();
+    const kinds = d.kinds||[];
+    const total = kinds.reduce((a,k)=>a+(k.total||0),0);
+    const srcCount = Object.keys(d.by_source||{}).length;
+    $('dashMeta').textContent = d.has_ai_data
+      ? `共 ${total} 条 AI 提取 ｜ ${srcCount} 个源文件`
+      : '⚠️ 尚未配置 AI Key 或未分析 —— 上传文件并配置 Key 后自动分析入库';
+    const kpiBox = $('dashKpis');
+    const gBox = $('dashGlobal');
+    if(!d.has_ai_data){
+      kpiBox.innerHTML = '';
+      gBox.innerHTML = '<div class="dash-empty">暂无 AI 提取数据。请先配置 AI Key（AI 配置库），然后重新上传源文件（上传即自动分析）。</div>';
+      $('dashGroups').innerHTML = '';
+      return;
+    }
+    // 动态性质：收集所有条目 marks 数组（来自分析要求 title），每个性质一张 KPI 卡 + 一个专区
+    await loadMarkColumns();
+    const allItems = [];
+    kinds.forEach(k=>(k.sections||[]).forEach(s=>s.items.forEach(it=>allItems.push({...it, _kind:k.kind, _label:k.label}))));
+    const markCounts = {};
+    const markReasons = {};
+    allItems.forEach(it=>{
+      const f = (it.payload&&it.payload.fields)||{};
+      const marks = Array.isArray(f['marks']) ? f['marks'] : [];
+      (f['focus'] && /^是$|重点/.test(String(f['focus']))) && !marks.includes('重点关注') && marks.push('重点关注');
+      marks.forEach(m=>{
+        markCounts[m] = (markCounts[m]||0) + 1;
+        if(f['mark_reasons'] && f['mark_reasons'][m]) markReasons[m] = f['mark_reasons'][m];
+      });
+    });
+    // 高风险的旧数据兼容：level=高 计入「重点关注」
+    const legacyFocus = allItems.filter(isFocusItem);
+    if(legacyFocus.length){
+      markCounts['重点关注'] = (markCounts['重点关注']||0) + legacyFocus.length;
+      legacyFocus.forEach(it=>{ const r=(it.payload&&it.payload.fields)||{}; if(r['level']&&/高|严重/.test(String(r['level']))) markReasons['重点关注']='风险等级高'; });
+    }
+    // 应用看板定制配置（localStorage）：KPI 顺序/隐藏/颜色
+    const dcfg = getDashConfig();
+    const kpiDefOrder = ['条目总数', ...Object.keys(markCounts), 'metric','task','risk','milestone','decision'];
+    const kpiPool = {};
+    kpiPool['条目总数'] = dashKpiHtml('条目总数', total, srcCount+' 个源文件', 'var(--primary)');
+    Object.keys(markCounts).forEach(m=>{ kpiPool[m] = dashKpiHtml(m, markCounts[m], '按分析约定命中', (dcfg.kpi_color||{})[m]||'#A33A37'); });
+    ['metric','task','risk','milestone','decision'].forEach(kind=>{
+      const k = kinds.find(x=>x.kind===kind);
+      if(k && k.total>0) kpiPool[KIND_LABEL[kind]||kind] = dashKpiHtml(KIND_LABEL[kind]||kind, k.total, '', KIND_COLOR[kind]||'var(--text)');
+    });
+    const kpiNames = Object.keys(kpiPool);
+    const kpiOrder = dashCfgPick(dcfg, 'kpi', kpiNames, kpiDefOrder);
+    const kpiHtml2 = kpiOrder.map(n=>kpiPool[n]).join('');
+    kpiBox.innerHTML = kpiHtml2;
+    // 性质专区：每个性质一个置顶块（跨分类汇总该性质命中的条目）——顺序/隐藏/标题/副文案按定制配置
+    const zoneDefOrder = Object.keys(markCounts);
+    const zonePool = {};
+    Object.keys(markCounts).forEach(m=>{
+      const hits = allItems.filter(it=>{
+        const f=(it.payload&&it.payload.fields)||{};
+        const marks = Array.isArray(f['marks']) ? f['marks'] : [];
+        if(marks.includes(m)) return true;
+        if(m==='重点关注' && isFocusItem(it)) return true;
+        return false;
+      });
+      if(!hits.length) return;
+      const ztitle = (dcfg.zone_title||{})[m] || ('★ ' + m);
+      const znote = (dcfg.zone_note||{})[m] || '按分析约定命中';
+      zonePool[m] = `<div class="dash-kind" style="border-color:#A33A37;">
+      <div class="dash-kind-head">
+        <span class="dash-kind-dot" style="background:#A33A37"></span>
+        <b>${esc(ztitle)}</b>
+        <span class="cnt">${hits.length} 条</span>
+      </div>
+      <div class="dash-items">
+        ${hits.map(it=>{
+          const p = it.payload||{};
+          const reason = (p.fields||{})['mark_reasons'] ? (p.fields||{})['mark_reasons'][m] : '';
+          return `<div class="dash-item" style="--accent:#A33A37">
+            <div class="nm">${esc(it._label||'')} · ${esc(it.name)}${dashTag(p)}</div>
+            <div class="fs">${reason?`<span class="k">原因</span> <b>${esc(String(reason).slice(0,60))}</b>`:`<span class="k">${esc(znote)}</span>`}</div>
+          </div>`;
+        }).join('')}
+      </div>
+    </div>`;
+    });
+    const zoneNames = Object.keys(zonePool);
+    const zoneOrder = dashCfgPick(dcfg, 'zone', zoneNames, zoneDefOrder);
+    const markZones = zoneOrder.map(n=>zonePool[n]).join('');
+    // 分类区块：每个分类一个圆角卡，板块为小节，条目为字段自适应卡片——顺序/隐藏按定制配置
+    const kindPool = {};
+    kinds.forEach(k=>{
+      const color = KIND_COLOR[k.kind]||'#6B7280';
+      const secHtml = (k.sections||[]).map(s=>`
+        <div class="dash-sec" style="color:var(--muted)">${esc(s.name||'（未分板块）')}</div>
+        <div class="dash-items">
+          ${s.items.map(it=>{
+            const p = it.payload||{};
+            return `<div class="dash-item" style="--accent:${color}">
+              <div class="nm">${esc(it.name)}${dashTag(p)}</div>
+              <div class="fs">${dashItemFields(p)||'<span class="k">—</span>'}</div>
+            </div>`;
+          }).join('')}
+        </div>`).join('');
+      kindPool[k.kind] = `<div class="dash-kind">
+        <div class="dash-kind-head">
+          <span class="dash-kind-dot" style="background:${color}"></span>
+          <b>${esc(k.label||k.kind)}</b>
+          <span class="cnt">${k.total||0} 条</span>
+        </div>
+        ${secHtml||'<div style="font-size:12px;color:var(--muted);">（无条目）</div>'}
+      </div>`;
+    });
+    const kindNames2 = Object.keys(kindPool);
+    const kindOrder = dashCfgPick(dcfg, 'kind', kindNames2, kinds.map(k=>k.kind));
+    gBox.innerHTML = markZones + kindOrder.map(n=>kindPool[n]).join('');
+    $('dashGroups').innerHTML = '';
+  }catch(e){ $('dashGlobal').innerHTML='<div class="dash-empty">看板加载失败：'+esc(e.message)+'</div>'; }
+}
+
+
 // ============ 深色模式 / 首次引导 ============
 function toggleDark(){
   document.body.classList.toggle('dark');
