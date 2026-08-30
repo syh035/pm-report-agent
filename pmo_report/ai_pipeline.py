@@ -24,7 +24,7 @@ import tempfile
 from typing import Dict, List, Optional
 
 # markitdown 需要 Python >=3.10，用独立解释器子进程调用（当前项目 venv 是 3.9）
-MARKITDOWN_PY = os.environ.get("MARKITDOWN_PY") or "/Users/sheng/.local/bin/python3.12"
+MARKITDOWN_PY = os.environ.get("MARKITDOWN_PY") or "python3.12"
 
 _MD_HELPER = """
 import sys, json
